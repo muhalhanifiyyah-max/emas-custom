@@ -1,7 +1,13 @@
 import React from 'react';
-import { X, Printer, ShieldCheck, Building2, Calendar, FileText, CheckCircle2 } from 'lucide-react';
+import { X, Printer, Building2, CheckCircle2 } from 'lucide-react';
 import { BprsCicilanOrder } from '../../types/customGold';
 import { formatRupiah } from '../../utils/pointCalculator';
+
+const STATUS_CLASS: Record<BprsCicilanOrder['status'], string> = {
+  Aktif: 'bg-blue-50 text-blue-700 border-blue-200',
+  Lunas: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  'Jatuh Tempo': 'bg-red-50 text-red-700 border-red-200',
+};
 
 interface BprsFakturWebModalProps {
   order: BprsCicilanOrder;
@@ -17,8 +23,8 @@ export const BprsFakturWebModal: React.FC<BprsFakturWebModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto print:p-0 print:bg-white">
-      <div className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-purple-100 overflow-hidden my-8 print:border-none print:shadow-none print:m-0">
+    <div className="fixed inset-0 z-50 bg-black/60 flex p-4 overflow-y-auto print:static print:block print:p-0 print:bg-white print:overflow-visible">
+      <div className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-purple-100 overflow-hidden m-auto print:max-w-none print:rounded-none print:border-none print:shadow-none print:m-0">
         {/* Header toolbar */}
         <div className="px-6 py-4 bg-gradient-to-r from-blue-900 to-indigo-900 text-white flex items-center justify-between print:hidden">
           <div className="flex items-center gap-2.5">
@@ -70,7 +76,7 @@ export const BprsFakturWebModal: React.FC<BprsFakturWebModalProps> = ({
             </div>
 
             <div className="text-right">
-              <div className="inline-block px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-2 bg-blue-50 text-blue-700 border border-blue-200">
+              <div className={`inline-block px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-2 border ${STATUS_CLASS[order.status]}`}>
                 STATUS AKAD: {order.status}
               </div>
               <div className="text-xs text-gray-500">No. Faktur Website:</div>
@@ -151,7 +157,7 @@ export const BprsFakturWebModal: React.FC<BprsFakturWebModalProps> = ({
             <div className="text-right">
               <div className="text-[11px] text-gray-500">Total Akumulasi Pembayaran:</div>
               <div className="font-mono font-bold text-blue-950 text-sm">
-                {formatRupiah(order.downPayment + (order.monthlyInstallment * order.installmentsPaid))}
+                {formatRupiah(Math.min(order.totalValue, order.downPayment + order.monthlyInstallment * order.installmentsPaid))}
               </div>
             </div>
           </div>

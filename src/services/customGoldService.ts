@@ -3,9 +3,8 @@ import {
   BprsInstitutionInfo,
   CustomOrderItem,
   BprsCicilanOrder,
-  WorkProgressStep,
-  ShippingMethod,
 } from '../types/customGold';
+import { romanMonth } from '../utils/date';
 
 export const REI_BRANCHES: BranchReiInfo[] = [
   {
@@ -546,24 +545,22 @@ export function saveBprsCicilanOrders(orders: BprsCicilanOrder[]): void {
 }
 
 // Generate new ID and Order Numbers
+function randomSuffix(): string {
+  return String(Math.floor(1000 + Math.random() * 9000));
+}
+
 export function generateCustomOrderNumber(): string {
-  const timestamp = Date.now().toString().slice(-4);
   const now = new Date();
-  const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
-  return `ORD-CUST/REI/${year}/${month}/${timestamp}`;
+  return `ORD-CUST/REI/${now.getFullYear()}/${month}/${Date.now().toString().slice(-5)}`;
 }
 
 export function generateInvoiceDpNumber(): string {
-  const rand = Math.floor(1000 + Math.random() * 9000);
   const now = new Date();
-  const year = now.getFullYear();
-  return `INV-DP/REI/${year}/XI/${rand}`;
+  return `INV-DP/REI/${now.getFullYear()}/${romanMonth(now)}/${randomSuffix()}`;
 }
 
 export function generateInvoiceLunasNumber(): string {
-  const rand = Math.floor(1000 + Math.random() * 9000);
   const now = new Date();
-  const year = now.getFullYear();
-  return `INV-LUNAS/REI/${year}/XI/${rand}`;
+  return `INV-LUNAS/REI/${now.getFullYear()}/${romanMonth(now)}/${randomSuffix()}`;
 }

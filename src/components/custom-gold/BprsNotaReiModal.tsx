@@ -1,7 +1,6 @@
 import React from 'react';
-import { X, Printer, ShieldCheck, Building2, CheckCircle2, Award, Calendar, CheckSquare } from 'lucide-react';
+import { X, Printer, Building2, CheckCircle2, Award } from 'lucide-react';
 import { BprsCicilanOrder } from '../../types/customGold';
-import { formatRupiah } from '../../utils/pointCalculator';
 
 interface BprsNotaReiModalProps {
   order: BprsCicilanOrder;
@@ -22,15 +21,22 @@ export const BprsNotaReiModal: React.FC<BprsNotaReiModalProps> = ({
     window.print();
   };
 
+  // Saat belum serah terima, tampilkan nilai yang sedang diketik di form.
+  const displayReiOfficer = order.isHandoverCompleted ? order.handoverReiOfficer || reiOfficer : reiOfficer;
+  const displayBprsOfficer = order.isHandoverCompleted ? order.handoverBprsOfficer || bprsOfficer : bprsOfficer;
+
   const handleSaveHandover = () => {
-    if (onCompleteHandover) {
-      onCompleteHandover(order.id, reiOfficer, bprsOfficer, notes);
+    if (!onCompleteHandover) return;
+    if (!reiOfficer.trim() || !bprsOfficer.trim()) {
+      alert('Nama petugas REI dan petugas BPRS / nasabah wajib diisi.');
+      return;
     }
+    onCompleteHandover(order.id, reiOfficer.trim(), bprsOfficer.trim(), notes.trim());
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto print:p-0 print:bg-white">
-      <div className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-amber-200 overflow-hidden my-8 print:border-none print:shadow-none print:m-0">
+    <div className="fixed inset-0 z-50 bg-black/60 flex p-4 overflow-y-auto print:static print:block print:p-0 print:bg-white print:overflow-visible">
+      <div className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-amber-200 overflow-hidden m-auto print:max-w-none print:rounded-none print:border-none print:shadow-none print:m-0">
         {/* Header toolbar */}
         <div className="px-6 py-4 bg-gradient-to-r from-amber-700 via-amber-800 to-yellow-900 text-white flex items-center justify-between print:hidden">
           <div className="flex items-center gap-2.5">
@@ -107,7 +113,7 @@ export const BprsNotaReiModal: React.FC<BprsNotaReiModalProps> = ({
                 PIHAK PERTAMA (PENGELOLA KHAZANAH REI)
               </span>
               <div className="font-bold text-gray-900">{order.branchRei}</div>
-              <div className="text-gray-600 mt-1">Petugas: <span className="font-semibold text-gray-800">{order.handoverReiOfficer || reiOfficer}</span></div>
+              <div className="text-gray-600 mt-1">Petugas: <span className="font-semibold text-gray-800">{displayReiOfficer}</span></div>
               <div className="text-gray-500 text-[11px]">PT Emas Murni Asli (Raja Emas Indonesia)</div>
             </div>
 
@@ -202,14 +208,14 @@ export const BprsNotaReiModal: React.FC<BprsNotaReiModalProps> = ({
             <div>
               <p className="text-gray-500 mb-14">Pihak Pertama (Petugas Khazanah REI):</p>
               <div className="font-bold text-gray-900 border-b border-gray-300 pb-1 mx-8">
-                {order.handoverReiOfficer || reiOfficer}
+                {displayReiOfficer}
               </div>
               <div className="text-[10px] text-gray-400 mt-1">{order.branchRei}</div>
             </div>
             <div>
               <p className="text-gray-500 mb-14">Pihak Kedua (Petugas BPRS / Nasabah):</p>
               <div className="font-bold text-gray-900 border-b border-gray-300 pb-1 mx-8">
-                {order.handoverBprsOfficer || bprsOfficer}
+                {displayBprsOfficer}
               </div>
               <div className="text-[10px] text-gray-400 mt-1">{order.bprsName}</div>
             </div>

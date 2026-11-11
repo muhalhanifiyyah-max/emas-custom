@@ -15,14 +15,15 @@ export const CustomLunasInvoiceModal: React.FC<CustomLunasInvoiceModalProps> = (
   onConfirmLunas,
 }) => {
   const isPaid = order.lunasInvoice.status === 'terkonfirmasi';
+  const isDpPaid = order.dpInvoice.status === 'terkonfirmasi';
 
   const handlePrint = () => {
     window.print();
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto print:p-0 print:bg-white">
-      <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-purple-100 overflow-hidden my-8 print:border-none print:shadow-none print:m-0">
+    <div className="fixed inset-0 z-50 bg-black/60 flex p-4 overflow-y-auto print:static print:block print:p-0 print:bg-white print:overflow-visible">
+      <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-purple-100 overflow-hidden m-auto print:max-w-none print:rounded-none print:border-none print:shadow-none print:m-0">
         {/* Header toolbar - hidden when printing */}
         <div className="px-6 py-4 bg-gradient-to-r from-emerald-800 to-teal-900 text-white flex items-center justify-between print:hidden">
           <div className="flex items-center gap-2.5">
@@ -104,7 +105,7 @@ export const CustomLunasInvoiceModal: React.FC<CustomLunasInvoiceModalProps> = (
               <div className="text-gray-500 font-medium">No. Pesanan:</div>
               <div className="font-bold font-mono text-gray-900 mt-0.5">{order.orderNumber}</div>
               <div className="text-gray-500 mt-1 font-medium">No. Invoice DP Terdahulu:</div>
-              <div className="font-bold font-mono text-purple-900">{order.dpInvoice.invoiceNumber} (Lunas)</div>
+              <div className="font-bold font-mono text-purple-900">{order.dpInvoice.invoiceNumber} {isDpPaid ? '(Lunas)' : '(Belum Dibayar)'}</div>
             </div>
           </div>
 
@@ -203,7 +204,12 @@ export const CustomLunasInvoiceModal: React.FC<CustomLunasInvoiceModalProps> = (
 
         {/* Footer Actions (Screen only) */}
         <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between print:hidden">
-          {!isPaid && onConfirmLunas && (
+          {!isPaid && onConfirmLunas && !isDpPaid && (
+            <span className="text-xs text-amber-700 font-semibold">
+              Konfirmasi pembayaran DP terlebih dahulu.
+            </span>
+          )}
+          {!isPaid && onConfirmLunas && isDpPaid && (
             <button
               onClick={() => onConfirmLunas(order.id)}
               className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-emerald-600/20 transition-all"

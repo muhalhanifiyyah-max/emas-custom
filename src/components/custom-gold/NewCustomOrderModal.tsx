@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
-import { X, Sparkles, Upload, Image, Calculator, Building2, User, Phone, CheckCircle2 } from 'lucide-react';
+import { X, Sparkles, Upload, FileText, Building2, User, Phone, CheckCircle2 } from 'lucide-react';
 import { CustomOrderItem } from '../../types/customGold';
 import { REI_BRANCHES, generateCustomOrderNumber, generateInvoiceDpNumber, generateInvoiceLunasNumber } from '../../services/customGoldService';
 import { formatRupiah } from '../../utils/pointCalculator';
+import { addDaysISO, nowStamp } from '../../utils/date';
+import { isImageUrl, readFileAsDataUrl } from '../../utils/file';
 
 interface NewCustomOrderModalProps {
   onClose: () => void;
   onSubmit: (newOrder: CustomOrderItem) => void;
+  defaultBranch?: string;
+  defaultPricePerGram?: number;
 }
 
 const DEFAULT_SAMPLE_DESIGNS = [
@@ -30,14 +34,16 @@ const DEFAULT_SAMPLE_DESIGNS = [
 export const NewCustomOrderModal: React.FC<NewCustomOrderModalProps> = ({
   onClose,
   onSubmit,
+  defaultBranch,
+  defaultPricePerGram,
 }) => {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  const [selectedBranch, setSelectedBranch] = useState(REI_BRANCHES[0].name);
+  const [selectedBranch, setSelectedBranch] = useState(defaultBranch || REI_BRANCHES[0].name);
   const [goldGram, setGoldGram] = useState<number>(5);
   const [goldType, setGoldType] = useState('Custom Card Logam Mulia');
   const [quantity, setQuantity] = useState<number>(1);
-  const [pricePerGram, setPricePerGram] = useState<number>(2565000);
+  const [pricePerGram, setPricePerGram] = useState<number>(defaultPricePerGram || 2565000);
   const [customDesignFee, setCustomDesignFee] = useState<number>(150000);
   const [requestDetails, setRequestDetails] = useState('');
   const [dpPercentage, setDpPercentage] = useState<number>(50);
@@ -51,7 +57,7 @@ export const NewCustomOrderModal: React.FC<NewCustomOrderModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customerName || !customerPhone) {
+    if (!customerName.trim() || !customerPhone.trim()) {
       alert('Mohon isi nama pemesan dan nomor WhatsApp.');
       return;
     }
@@ -59,15 +65,14 @@ export const NewCustomOrderModal: React.FC<NewCustomOrderModalProps> = ({
     const orderNumber = generateCustomOrderNumber();
     const dpInvoiceNumber = generateInvoiceDpNumber();
     const lunasInvoiceNumber = generateInvoiceLunasNumber();
-    const now = new Date();
-    const formattedDate = `${now.toISOString().split('T')[0]} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const formattedDate = nowStamp();
 
     const newOrder: CustomOrderItem = {
       id: `custom-ord-${Date.now()}`,
       orderNumber,
       orderType: 'perorangan_cabang',
-      customerName,
-      customerPhone,
+      customerName: customerName.trim(),
+      customerPhone: customerPhone.trim(),
       branchRei: selectedBranch,
       goldGram,
       goldPurity: '999.9 (24 Karat) Fine Gold',
@@ -89,13 +94,13 @@ export const NewCustomOrderModal: React.FC<NewCustomOrderModalProps> = ({
         invoiceNumber: dpInvoiceNumber,
         dpAmount,
         dpPercentage,
-        dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        dueDate: addDaysISO(3),
         status: 'pending',
       },
       lunasInvoice: {
         invoiceNumber: lunasInvoiceNumber,
         remainingAmount: totalPrice - dpAmount,
-        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        dueDate: addDaysISO(7),
         status: 'pending',
       },
       createdAt: formattedDate,
@@ -105,24 +110,26 @@ export const NewCustomOrderModal: React.FC<NewCustomOrderModalProps> = ({
     onSubmit(newOrder);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setDesignUrl(dataUrl);
       setDesignFilename(file.name);
-      const fakeUrl = URL.createObjectURL(file);
-      setDesignUrl(fakeUrl);
+    } catch (err) {
+      alert((err as Error).message);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-purple-100 overflow-hidden my-8">
+    <div className="fixed inset-0 z-50 bg-black/60 flex p-4 overflow-y-auto print:static print:block print:p-0 print:bg-white print:overflow-visible">
+      <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-purple-100 overflow-hidden m-auto print:max-w-none print:rounded-none print:border-none print:shadow-none print:m-0">
         {/* Header */}
         <div className="px-6 py-4 bg-gradient-to-r from-purple-900 to-indigo-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-amber-400 text-purple-950 font-black flex items-center justify-center text-xs shadow-md">
-              <Sparkles className="w-4 h-4" />
-            </div>
+
             <div>
               <h3 className="font-bold text-sm tracking-wide">Pemesanan Custom Emas Perorangan Cabang REI</h3>
               <p className="text-[11px] text-purple-200">Buat pesanan custom LM, invoice DP, dan file cetak</p>
@@ -285,11 +292,10 @@ export const NewCustomOrderModal: React.FC<NewCustomOrderModalProps> = ({
                       setDesignUrl(s.url);
                       setDesignFilename(s.filename);
                     }}
-                    className={`px-2 py-1 rounded text-[10px] border transition-all ${
-                      designFilename === s.filename
+                    className={`px-2 py-1 rounded text-[10px] border transition-all ${designFilename === s.filename
                         ? 'bg-purple-100 border-purple-600 text-purple-900 font-bold'
                         : 'bg-white border-gray-200 text-gray-600 hover:border-gray-400'
-                    }`}
+                      }`}
                   >
                     Preset {idx + 1}
                   </button>
@@ -299,11 +305,18 @@ export const NewCustomOrderModal: React.FC<NewCustomOrderModalProps> = ({
 
             {/* Design Preview */}
             <div className="relative rounded-xl overflow-hidden border border-gray-300 max-h-40 bg-gray-900 flex items-center justify-center">
-              <img
-                src={designUrl}
-                alt="Preview Desain"
-                className="max-h-40 w-full object-contain"
-              />
+              {isImageUrl(designUrl) ? (
+                <img
+                  src={designUrl}
+                  alt="Preview Desain"
+                  className="max-h-40 w-full object-contain"
+                />
+              ) : (
+                <div className="h-28 flex flex-col items-center justify-center gap-1 text-gray-300 text-[11px]">
+                  <FileText className="w-6 h-6" />
+                  <span className="font-mono">{designFilename}</span>
+                </div>
+              )}
               <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/60 text-white text-[10px] backdrop-blur-sm">
                 Preview Desain Cetak
               </div>
@@ -339,11 +352,10 @@ export const NewCustomOrderModal: React.FC<NewCustomOrderModalProps> = ({
                   type="button"
                   key={pct}
                   onClick={() => setDpPercentage(pct)}
-                  className={`px-2 py-0.5 rounded text-xs font-bold border transition-colors ${
-                    dpPercentage === pct
+                  className={`px-2 py-0.5 rounded text-xs font-bold border transition-colors ${dpPercentage === pct
                       ? 'bg-emerald-600 text-white border-emerald-600'
                       : 'bg-white border-emerald-300 text-emerald-800'
-                  }`}
+                    }`}
                 >
                   {pct}%
                 </button>

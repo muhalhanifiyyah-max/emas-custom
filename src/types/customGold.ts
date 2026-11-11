@@ -1,3 +1,94 @@
+export type CustomGoldRole =
+  | 'admin'
+  | 'cabang_rei'
+  | 'desainer_produksi'
+  | 'finance'
+  | 'bprs';
+
+export interface CustomGoldSession {
+  id: string;
+  role: CustomGoldRole;
+  name: string;
+  email: string;
+  branchRei?: string;
+  partnerId?: string;
+  partnerName?: string;
+  partnerCategory?: string;
+  isHimbarsi?: boolean;
+  avatarBadge: string;
+  source: 'supabase_partners' | 'internal_rei';
+}
+
+export interface RoleMetadata {
+  role: CustomGoldRole;
+  label: string;
+  badgeColor: string;
+  description: string;
+  canCreateOrder: boolean;
+  canConfirmPayment: boolean;
+  canUpdateProgress: boolean;
+  canSignNotaRei: boolean;
+  canViewBprsTab: boolean;
+}
+
+export const ROLE_CONFIG: Record<CustomGoldRole, RoleMetadata> = {
+  admin: {
+    role: 'admin',
+    label: 'Super Admin Pusat REI',
+    badgeColor: 'bg-purple-600 text-white border-purple-400',
+    description: 'Akses penuh seluruh cabang REI, verifikasi pembayaran, produksi & BPRS.',
+    canCreateOrder: true,
+    canConfirmPayment: true,
+    canUpdateProgress: true,
+    canSignNotaRei: true,
+    canViewBprsTab: true,
+  },
+  cabang_rei: {
+    role: 'cabang_rei',
+    label: 'PIC Cabang REI',
+    badgeColor: 'bg-amber-500 text-purple-950 border-amber-300',
+    description: 'Buat pesanan cabang, pantau pengiriman, dan tandatangani Nota Serah Terima REI.',
+    canCreateOrder: true,
+    canConfirmPayment: false,
+    canUpdateProgress: true,
+    canSignNotaRei: true,
+    canViewBprsTab: true,
+  },
+  desainer_produksi: {
+    role: 'desainer_produksi',
+    label: 'Tim Desain & Produksi',
+    badgeColor: 'bg-indigo-600 text-white border-indigo-400',
+    description: 'Kelola file final desain cetak, update produksi, & upload resi pengiriman JNE/Helper.',
+    canCreateOrder: false,
+    canConfirmPayment: false,
+    canUpdateProgress: true,
+    canSignNotaRei: false,
+    canViewBprsTab: false,
+  },
+  finance: {
+    role: 'finance',
+    label: 'Finance & Verifikasi',
+    badgeColor: 'bg-emerald-600 text-white border-emerald-400',
+    description: 'Verifikasi & konfirmasi Invoice DP, pelunasan akhir (Invoice Lunas), dan Faktur Web.',
+    canCreateOrder: false,
+    canConfirmPayment: true,
+    canUpdateProgress: false,
+    canSignNotaRei: false,
+    canViewBprsTab: true,
+  },
+  bprs: {
+    role: 'bprs',
+    label: 'Mitra BPRS / Lembaga',
+    badgeColor: 'bg-blue-600 text-white border-blue-400',
+    description: 'Pantau cicilan emas nasabah per cabang REI, cetak Faktur Website & Nota REI.',
+    canCreateOrder: true,
+    canConfirmPayment: false,
+    canUpdateProgress: false,
+    canSignNotaRei: false,
+    canViewBprsTab: true,
+  },
+};
+
 export interface BranchReiInfo {
   id: string;
   name: string;
@@ -20,6 +111,7 @@ export interface BprsInstitutionInfo {
   isActive: boolean;
   totalActiveContracts: number;
   totalGramsFinanced: number;
+  fromDatabase?: boolean;
 }
 
 export type DesignStatus = 'draft' | 'menunggu_approval' | 'disetujui' | 'siap_cetak';
@@ -79,6 +171,7 @@ export interface CustomOrderItem {
   lunasInvoice: LunasInvoiceInfo;
   createdAt: string;
   updatedAt: string;
+  syncedToSupabase?: boolean;
 }
 
 export interface BprsCicilanOrder {
@@ -109,4 +202,5 @@ export interface BprsCicilanOrder {
   handoverBprsOfficer?: string;
   handoverNotes?: string;
   isHandoverCompleted: boolean;
+  fromDatabase?: boolean;
 }

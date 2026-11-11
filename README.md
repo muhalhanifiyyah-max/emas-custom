@@ -1,69 +1,58 @@
 # Platform Emas-Custom & Cicilan BPRS — Raja Emas Indonesia
 
-Aplikasi web standalone terpadu untuk pengelolaan **Pemesanan Custom Logam Mulia Perorangan dari Cabang REI** serta **Pembiayaan Cicilan Emas Konsorsium Lembaga BPRS**, siap dideploy secara terpisah (misal di Vercel, Netlify, atau Cloudflare Pages).
+Aplikasi web standalone terpadu untuk pengelolaan **Pemesanan Custom Logam Mulia Perorangan dari Cabang REI** serta **Pembiayaan Cicilan Emas Konsorsium Lembaga BPRS**, terhubung secara real-time dengan database Supabase milik **Dasbor Mitra** & **CRM**.
+
+---
+
+## 🔐 Sistem Login & Multi-User Role
+
+Aplikasi ini dilengkapi gerbang login multi-role yang terhubung langsung dengan tabel `partners` pada database pusat Supabase (Mitra & CRM) serta direktori role internal REI:
+
+| Role | Label | Hak Akses & Ruang Lingkup |
+| --- | --- | --- |
+| `admin` | **Super Admin Pusat REI** | Akses penuh seluruh cabang REI, buat order, verifikasi DP/Lunas, update progres, BPRS & tandatangan Nota REI. |
+| `cabang_rei` | **PIC Cabang REI** | Otomatis terfilter ke cabang REI terkait (Depok, Tebet, dll), buat order custom cabang, update pengiriman/resi, & tandatangan Nota REI. |
+| `desainer_produksi` | **Tim Desain & Produksi** | Kelola file desain cetak dan update tahap pengerjaan (`Desain` ➔ `Produksi` ➔ `Pengiriman Helper/JNE + Resi` ➔ `Selesai`). |
+| `finance` | **Finance & Verifikasi** | Verifikasi & konfirmasi pembayaran **Invoice DP** dan **Invoice Lunas**, serta audit Faktur Web BPRS. |
+| `bprs` | **Mitra BPRS / HIMBARSI** | Autentikasi langsung via tabel `partners` Supabase (sinkron dengan akun Dasbor Mitra), akses daftar cicilan BPRS, filter cabang REI, cetak **Faktur Web** & **Nota REI**. |
+
+---
+
+## 🔗 Integrasi Database (Mitra, CRM, Emas-Custom)
+
+Ketiga platform berbagi database Supabase yang sama (`partners`, `transactions`, `gold_products`, `notifications`):
+- **Harga Emas Live**: Harga dasar per gram otomatis ditarik dari katalog `gold_products` (`prod-rei-1`).
+- **Daftar Mitra BPRS Live**: Mitra BPRS yang terdaftar di tabel `partners` (termasuk BPRS HIK Insan Cita Depok, BPRS HIK Ciledug, HIMBARSI, dll) langsung tersinkronisasi dan dapat login menggunakan kredensial Dasbor Mitra.
+- **Sinkronisasi Pesanan**: Pesanan custom yang dibuat atau diperbarui di `emas-custom` otomatis tersinkronisasi ke tabel `transactions` & `notifications` sehingga tampil di Dasbor Mitra dan CRM.
 
 ---
 
 ## 📌 Fitur Utama
 
 ### A. Pemesanan Custom Perorangan dari Cabang REI
-1. **Invoice DP (Uang Muka)**:
-   - Terbit otomatis dengan nomor invoice resmi (`INV-DP/REI/...`).
-   - Rincian DP (persentase/nominal), batas tempo, verifikasi pembayaran, cetak faktur PDF.
-2. **Detail Request-an untuk LM**:
-   - Data pemesan, kontak WhatsApp, cabang REI asal.
-   - Gramasi (0.5g - 100g), kadar 999.9 (24 Karat), jenis kemasan/custom bar, detail teks grafir.
-3. **File Final Design untuk Dicetak**:
-   - Preview visual mockup desain cetak beresolusi tinggi.
-   - Status approval & tombol unduh file cetak untuk operator grafir.
-4. **Proses Pengerjaan (Pipeline Stepper)**:
-   - `Pengerjaan Design` ➔ `Pengerjaan Produksi` ➔ `Pengiriman` ➔ `Done`.
-   - Pada tahap pengiriman:
-     - Opsi **Helper REI** (nama & kontak helper pengantar).
-     - Opsi **Ekspedisi JNE** (kolom nomor resi + fitur upload foto bukti resi JNE).
-5. **Invoice Lunas**:
-   - Otomatis menghitung sisa tagihan akhir setelah DP.
-   - Dokumen pelunasan resmi dengan stempel **LUNAS**, tanda tangan serah terima, dan cetak PDF.
+1. **Invoice DP (Uang Muka)** — Nomor invoice resmi (`INV-DP/REI/...`), rekening REI, cetak PDF, verifikasi DP oleh Finance/Admin.
+2. **Detail Request-an LM** — Data pemesan, WhatsApp, cabang REI, gramasi, kadar 999.9, dan detail grafir.
+3. **File Final Design** — Preview visual & unduh file cetak resolusi tinggi.
+4. **Proses Pengerjaan** — Stepper (`Desain` ➔ `Produksi` ➔ `Pengiriman` ➔ `Selesai`). Pengiriman mendukung **Helper REI** maupun **JNE** (dengan kolom nomor resi & upload foto resi).
+5. **Invoice Lunas** — Perhitungan sisa tagihan otomatis (`Total - DP`), stempel **LUNAS**, cetak PDF.
 
 ### B. Pemesanan Cicilan Emas Lewat BPRS
-1. **List BPRS Seluruhnya**:
-   - Master list instansi BPRS mitra (BPRS HIK Depok, HIK Pusat, HIK Parahyangan, Patriot Bekasi, AlSalaam, Botani, Amanah Ummah, BDS, dll).
-2. **Filter Cabang REI**:
-   - Filter transaksi berdasarkan cabang REI pemroses fisik emas (Tebet, Depok, Serpong, Bekasi, Cengkareng, Bandung, Bogor).
-3. **Faktur Website**:
-   - Dokumen tagihan elektronik resmi website untuk pembiayaan cicilan emas murabahah.
-4. **Nota REI**:
-   - Berita Acara Serah Terima (BAST) fisik emas dari Khazanah Cabang REI.
-   - Memuat **Kode ID / Nomor Seri Logam Mulia** (*serial numbers*) yang diserahkan.
+1. **List BPRS Seluruhnya** — Daftar BPRS konsorsium + data live dari Supabase `partners`.
+2. **Filter Cabang REI** — Penyaringan transaksi berdasarkan cabang REI pemroses fisik emas.
+3. **Faktur Website** — Dokumen tagihan elektronik cicilan emas.
+4. **Nota REI** — Berita Acara Serah Terima fisik emas cabang lengkap dengan **Kode ID / Serial Number LM**.
 
 ---
 
-## 🚀 Panduan Menjalankan Secara Lokal
+## 🚀 Menjalankan Secara Lokal & Deploy
 
 ```bash
-# 1. Masuk ke direktori
-cd emas-custom
-
-# 2. Install dependensi
 npm install
-
-# 3. Jalankan development server
-npm run dev
-# Akses di http://localhost:3003
-```
-
-## 📦 Panduan Build & Deploy
-
-```bash
-# Build untuk produksi
-npm run build
-
-# Preview hasil build
-npm run preview
+npm run dev     # http://localhost:3003
+npm run build   # Output di dist/
 ```
 
 ### Deploy ke Vercel:
-1. Hubungkan repository GitHub `emas-custom` ke Vercel.
-2. Framework preset: **Vite**.
-3. Build command: `npm run build`.
-4. Output directory: `dist`.
+1. Import repository `emas-custom` ke Vercel.
+2. Framework preset: **Vite**, Build Command: `npm run build`, Output Directory: `dist`.
+3. Opsional atur Environment Variables dari `.env.example` (jika ingin override URL/API key Supabase & URL link Dasbor Mitra/CRM).

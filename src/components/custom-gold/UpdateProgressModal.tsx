@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { X, Truck, CheckCircle2, Upload, Camera, FileText, AlertCircle } from 'lucide-react';
+import { X, Truck, CheckCircle2, Camera } from 'lucide-react';
 import { CustomOrderItem, WorkProgressStep, ShippingMethod } from '../../types/customGold';
+import { nowStamp } from '../../utils/date';
+import { readFileAsDataUrl } from '../../utils/file';
 
 interface UpdateProgressModalProps {
   order: CustomOrderItem;
@@ -21,11 +23,14 @@ export const UpdateProgressModal: React.FC<UpdateProgressModalProps> = ({
   const [jneResiPhotoUrl, setJneResiPhotoUrl] = useState(order.workProgress.jneResiPhotoUrl || '');
   const [notes, setNotes] = useState(order.workProgress.notes || '');
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setJneResiPhotoUrl(url);
+    e.target.value = '';
+    if (!file) return;
+    try {
+      setJneResiPhotoUrl(await readFileAsDataUrl(file));
+    } catch (err) {
+      alert((err as Error).message);
     }
   };
 
@@ -37,24 +42,26 @@ export const UpdateProgressModal: React.FC<UpdateProgressModalProps> = ({
       return;
     }
 
-    const now = new Date();
-    const formattedDate = `${now.toISOString().split('T')[0]} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    // Data pengiriman hanya disimpan bila tahap sudah pengiriman / selesai.
+    const hasShipping = currentStep === 'pengiriman' || currentStep === 'done';
+    const isHelper = hasShipping && shippingMethod === 'helper';
+    const isJne = hasShipping && shippingMethod === 'jne';
 
     onUpdate(order.id, {
       step: currentStep,
-      shippingMethod: currentStep === 'pengiriman' || currentStep === 'done' ? shippingMethod : undefined,
-      helperName: shippingMethod === 'helper' ? helperName : undefined,
-      helperPhone: shippingMethod === 'helper' ? helperPhone : undefined,
-      jneResiNumber: shippingMethod === 'jne' ? jneResiNumber.trim() : undefined,
-      jneResiPhotoUrl: shippingMethod === 'jne' ? jneResiPhotoUrl : undefined,
+      shippingMethod: hasShipping ? shippingMethod : undefined,
+      helperName: isHelper ? helperName.trim() : undefined,
+      helperPhone: isHelper ? helperPhone.trim() : undefined,
+      jneResiNumber: isJne ? jneResiNumber.trim() : undefined,
+      jneResiPhotoUrl: isJne ? jneResiPhotoUrl || undefined : undefined,
       notes: notes.trim(),
-      updatedAt: formattedDate,
+      updatedAt: nowStamp(),
     });
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-purple-100 overflow-hidden my-8">
+    <div className="fixed inset-0 z-50 bg-black/60 flex p-4 overflow-y-auto print:static print:block print:p-0 print:bg-white print:overflow-visible">
+      <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-purple-100 overflow-hidden m-auto print:max-w-none print:rounded-none print:border-none print:shadow-none print:m-0">
         {/* Header */}
         <div className="px-6 py-4 bg-gradient-to-r from-purple-900 to-indigo-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">

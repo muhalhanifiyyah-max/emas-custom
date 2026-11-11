@@ -1,42 +1,57 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Sparkles,
-  Users,
-  Coins,
-  Building2,
-  FileText,
-  Printer,
-  Search,
-  Filter,
-  Plus,
-  Truck,
-  CheckCircle2,
-  Clock,
-  ArrowRight,
-  ExternalLink,
-  ShieldCheck,
-  Eye,
-  Download,
-  AlertCircle,
-  Phone,
-  Calendar,
-  Layers,
   Award,
-  RefreshCw,
-  Sun,
+  Building2,
+  Clock,
+  Coins,
+  Database,
+  Download,
+  ExternalLink,
+  FileText,
+  Inbox,
+  LogOut,
   Moon,
-  Home,
-  Check,
+  Package,
+  Plus,
+  RefreshCw,
+  Scale,
+  Search,
+  Sun,
+  Truck,
+  Users,
+  Wallet,
+  X,
 } from 'lucide-react';
-import { CustomOrderItem, BprsCicilanOrder, WorkProgressStep } from './types/customGold';
 import {
-  REI_BRANCHES,
+  BprsCicilanOrder,
+  BprsInstitutionInfo,
+  CustomGoldSession,
+  CustomOrderItem,
+  DesignStatus,
+  ROLE_CONFIG,
+  WorkProgressStep,
+} from './types/customGold';
+import {
   BPRS_INSTITUTIONS,
-  loadCustomOrders,
-  saveCustomOrders,
+  REI_BRANCHES,
   loadBprsCicilanOrders,
+  loadCustomOrders,
   saveBprsCicilanOrders,
+  saveCustomOrders,
 } from './services/customGoldService';
+import {
+  CRM_DASHBOARD_URL,
+  DbSyncStatus,
+  MITRA_DASHBOARD_URL,
+  checkDatabaseConnection,
+  clearCustomSession,
+  fetchLiveBprsPartners,
+  fetchSyncedOrdersFromSupabase,
+  loadCustomSession,
+  saveCustomSession,
+  syncCustomOrderToSupabase,
+} from './services/supabase';
+import { LoginPage } from './components/LoginPage';
 import { CustomDpInvoiceModal } from './components/custom-gold/CustomDpInvoiceModal';
 import { CustomLunasInvoiceModal } from './components/custom-gold/CustomLunasInvoiceModal';
 import { BprsFakturWebModal } from './components/custom-gold/BprsFakturWebModal';
@@ -44,795 +59,1020 @@ import { BprsNotaReiModal } from './components/custom-gold/BprsNotaReiModal';
 import { NewCustomOrderModal } from './components/custom-gold/NewCustomOrderModal';
 import { UpdateProgressModal } from './components/custom-gold/UpdateProgressModal';
 import { formatRupiah } from './utils/pointCalculator';
+import { nowStamp, toLocalDateISO } from './utils/date';
+import { isImageUrl } from './utils/file';
+
+/* ------------------------------------------------------------------ */
+/* Konstanta & helper                                                  */
+/* ------------------------------------------------------------------ */
+
+type Tab = 'custom' | 'bprs';
+
+const STEPS: { key: WorkProgressStep; label: string }[] = [
+  { key: 'design', label: 'Desain' },
+  { key: 'produksi', label: 'Produksi' },
+  { key: 'pengiriman', label: 'Pengiriman' },
+  { key: 'done', label: 'Selesai' },
+];
+
+const DESIGN_STATUS_LABEL: Record<DesignStatus, string> = {
+  draft: 'Draft',
+  menunggu_approval: 'Menunggu approval',
+  disetujui: 'Disetujui',
+  siap_cetak: 'Siap cetak',
+};
+
+const THEME_KEY = 'rei_theme';
+
+/** "REI Tebet (Kantor Pusat Khazanah)" -> "REI Tebet" */
+const shortBranch = (name: string) => name.replace(/\s*\(.*\)\s*$/, '');
+
+function getInitialDark(): boolean {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved) return saved === 'dark';
+  } catch {
+    /* localStorage tidak tersedia */
+  }
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+}
+
+const inputCls =
+  'h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-white/10 dark:bg-[#16131f] dark:text-gray-100';
+
+const btnCls =
+  'inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-white/10 dark:bg-transparent dark:text-gray-200 dark:hover:bg-white/5';
+
+/* ------------------------------------------------------------------ */
+/* Komponen kecil                                                      */
+/* ------------------------------------------------------------------ */
+
+type Tone = 'gray' | 'amber' | 'green' | 'blue' | 'red';
+
+const TONE_CLS: Record<Tone, string> = {
+  gray: 'bg-gray-100 text-gray-700 dark:bg-white/10 dark:text-gray-300',
+  amber: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300',
+  green: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+  blue: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300',
+  red: 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300',
+};
+
+function Badge({ tone, children }: { tone: Tone; children: React.ReactNode }) {
+  return (
+    <span className={`inline-flex items-center whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-medium ${TONE_CLS[tone]}`}>
+      {children}
+    </span>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  hint,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: React.ReactNode;
+  hint?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-white/10 dark:bg-[#16131f]">
+      <div className="flex items-center justify-between text-xs font-medium text-gray-500 dark:text-gray-400">
+        <span>{label}</span>
+        <Icon className="h-4 w-4 text-gray-400 dark:text-gray-500" />
+      </div>
+      <div className="mt-2 truncate text-xl font-semibold tabular-nums text-gray-900 dark:text-gray-50">{value}</div>
+      {hint && <div className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">{hint}</div>}
+    </div>
+  );
+}
+
+function StepIndicator({ step }: { step: WorkProgressStep }) {
+  const idx = Math.max(0, STEPS.findIndex((s) => s.key === step));
+  const isDone = step === 'done';
+  return (
+    <div>
+      <div className="flex gap-1" aria-hidden>
+        {STEPS.map((s, i) => (
+          <span
+            key={s.key}
+            className={`h-1.5 w-5 rounded-full ${
+              i <= idx ? (isDone ? 'bg-emerald-500' : 'bg-purple-600 dark:bg-purple-400') : 'bg-gray-200 dark:bg-white/10'
+            }`}
+          />
+        ))}
+      </div>
+      <div className="mt-1 text-xs font-medium text-gray-800 dark:text-gray-200">
+        {idx + 1}. {STEPS[idx].label}
+      </div>
+    </div>
+  );
+}
+
+function EmptyRow({ colSpan, onReset }: { colSpan: number; onReset?: () => void }) {
+  return (
+    <tr>
+      <td colSpan={colSpan} className="px-4 py-12 text-center">
+        <Inbox className="mx-auto h-6 w-6 text-gray-300 dark:text-gray-600" />
+        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Tidak ada data yang cocok dengan filter.</p>
+        {onReset && (
+          <button onClick={onReset} className="mt-2 text-xs font-medium text-purple-700 hover:underline dark:text-purple-300">
+            Reset filter
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* App                                                                 */
+/* ------------------------------------------------------------------ */
 
 export default function App() {
-  const [darkMode, setDarkMode] = useState(false);
-  const [activeTab, setActiveTab] = useState<'custom_perorangan' | 'cicilan_bprs'>('custom_perorangan');
+  const [darkMode, setDarkMode] = useState(getInitialDark);
+  const [session, setSession] = useState<CustomGoldSession | null>(() => loadCustomSession());
+  const [activeTab, setActiveTab] = useState<Tab>('custom');
 
-  // Orders State
-  const [customOrders, setCustomOrders] = useState<CustomOrderItem[]>([]);
-  const [bprsCicilanOrders, setBprsCicilanOrders] = useState<BprsCicilanOrder[]>([]);
+  const [customOrders, setCustomOrders] = useState<CustomOrderItem[]>(() => loadCustomOrders());
+  const [bprsOrders, setBprsOrders] = useState<BprsCicilanOrder[]>(() => loadBprsCicilanOrders());
+  const [bprsDirectory, setBprsDirectory] = useState<BprsInstitutionInfo[]>(BPRS_INSTITUTIONS);
 
-  // Filter States - Custom Perorangan
+  // Status sinkronisasi Live Database Supabase (Mitra & CRM)
+  const [dbStatus, setDbStatus] = useState<DbSyncStatus | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Filter - custom
   const [customSearch, setCustomSearch] = useState('');
-  const [customBranchFilter, setCustomBranchFilter] = useState('ALL');
-  const [customStepFilter, setCustomStepFilter] = useState('ALL');
+  const [customBranch, setCustomBranch] = useState('ALL');
+  const [customStep, setCustomStep] = useState('ALL');
 
-  // Filter States - Cicilan BPRS
+  // Filter - BPRS
   const [bprsSearch, setBprsSearch] = useState('');
-  const [bprsInstitutionFilter, setBprsInstitutionFilter] = useState('ALL');
-  const [bprsBranchFilter, setBprsBranchFilter] = useState('ALL'); // Sesuai ketentuan: filter cabang REI
+  const [bprsInstitution, setBprsInstitution] = useState('ALL');
+  const [bprsBranch, setBprsBranch] = useState('ALL');
+  const [bprsHandover, setBprsHandover] = useState<'ALL' | 'pending' | 'done'>('ALL');
 
-  // Modals State
-  const [selectedDpModalOrder, setSelectedDpModalOrder] = useState<CustomOrderItem | null>(null);
-  const [selectedLunasModalOrder, setSelectedLunasModalOrder] = useState<CustomOrderItem | null>(null);
-  const [selectedProgressModalOrder, setSelectedProgressModalOrder] = useState<CustomOrderItem | null>(null);
-  const [selectedFakturWebOrder, setSelectedFakturWebOrder] = useState<BprsCicilanOrder | null>(null);
-  const [selectedNotaReiOrder, setSelectedNotaReiOrder] = useState<BprsCicilanOrder | null>(null);
-  const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
-  const [previewDesignUrl, setPreviewDesignUrl] = useState<string | null>(null);
+  // Modal: simpan ID saja, lalu ambil data terbaru dari state (hindari data basi)
+  const [dpId, setDpId] = useState<string | null>(null);
+  const [lunasId, setLunasId] = useState<string | null>(null);
+  const [progressId, setProgressId] = useState<string | null>(null);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [fakturId, setFakturId] = useState<string | null>(null);
+  const [notaId, setNotaId] = useState<string | null>(null);
+  const [isNewOrderOpen, setIsNewOrderOpen] = useState(false);
 
-  // Load Data on Mount
-  useEffect(() => {
-    setCustomOrders(loadCustomOrders());
-    setBprsCicilanOrders(loadBprsCicilanOrders());
+  const dpOrder = customOrders.find((o) => o.id === dpId);
+  const lunasOrder = customOrders.find((o) => o.id === lunasId);
+  const progressOrder = customOrders.find((o) => o.id === progressId);
+  const previewOrder = customOrders.find((o) => o.id === previewId);
+  const fakturOrder = bprsOrders.find((o) => o.id === fakturId);
+  const notaOrder = bprsOrders.find((o) => o.id === notaId);
+
+  const anyModalOpen = !!(dpOrder || lunasOrder || progressOrder || previewOrder || fakturOrder || notaOrder || isNewOrderOpen);
+  const rolePerms = session ? ROLE_CONFIG[session.role] : ROLE_CONFIG.admin;
+
+  /* ---------- Sinkronisasi Live Database Supabase (Mitra & CRM) ---------- */
+
+  const syncWithDatabase = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      const [status, livePartners, syncedOrders] = await Promise.all([
+        checkDatabaseConnection(),
+        fetchLiveBprsPartners(),
+        fetchSyncedOrdersFromSupabase(),
+      ]);
+
+      setDbStatus(status);
+
+      // Gabungkan daftar BPRS live dari tabel `partners` + daftar konsorsium
+      if (livePartners.length > 0) {
+        setBprsDirectory(() => {
+          const map = new Map<string, BprsInstitutionInfo>();
+          BPRS_INSTITUTIONS.forEach((b) => map.set(b.id, b));
+          livePartners.forEach((lp) => {
+            // Cocokkan nama agar tidak duplikat jika ID berbeda
+            const existingSameName = Array.from(map.values()).find(
+              (m) => m.name.toLowerCase() === lp.name.toLowerCase()
+            );
+            if (existingSameName) {
+              map.set(existingSameName.id, { ...existingSameName, ...lp, id: existingSameName.id });
+            } else {
+              map.set(lp.id, lp);
+            }
+          });
+          return Array.from(map.values());
+        });
+      }
+
+      // Gabungkan Custom Orders dari Supabase `transactions` dengan cache lokal
+      if (syncedOrders.customOrders.length > 0) {
+        setCustomOrders((prev) => {
+          const map = new Map<string, CustomOrderItem>();
+          prev.forEach((o) => map.set(o.id, o));
+          syncedOrders.customOrders.forEach((so) => map.set(so.id, so));
+          const merged = Array.from(map.values());
+          saveCustomOrders(merged);
+          return merged;
+        });
+      }
+
+      // Gabungkan Transaksi BPRS live dari Supabase `transactions` dengan cache lokal
+      if (syncedOrders.bprsOrders.length > 0) {
+        setBprsOrders((prev) => {
+          const map = new Map<string, BprsCicilanOrder>();
+          prev.forEach((o) => map.set(o.id, o));
+          syncedOrders.bprsOrders.forEach((sb) => map.set(sb.id, sb));
+          const merged = Array.from(map.values());
+          saveBprsCicilanOrders(merged);
+          return merged;
+        });
+      }
+    } catch (err) {
+      console.error('Database sync error:', err);
+    } finally {
+      setIsSyncing(false);
+    }
   }, []);
 
+  useEffect(() => {
+    if (session) {
+      syncWithDatabase();
+    }
+  }, [session, syncWithDatabase]);
+
+  // Set default filter & tab sesuai role saat login
+  const applyRoleDefaults = useCallback((s: CustomGoldSession) => {
+    if (s.role === 'cabang_rei' && s.branchRei) {
+      setCustomBranch(s.branchRei);
+      setBprsBranch(s.branchRei);
+    } else {
+      setCustomBranch('ALL');
+      setBprsBranch('ALL');
+    }
+
+    if (s.role === 'bprs') {
+      setActiveTab('bprs');
+      if (!s.isHimbarsi && s.partnerId) {
+        setBprsInstitution(s.partnerId);
+      } else {
+        setBprsInstitution('ALL');
+      }
+    } else {
+      setActiveTab('custom');
+      setBprsInstitution('ALL');
+    }
+  }, []);
+
+  const handleLogin = (newSession: CustomGoldSession) => {
+    saveCustomSession(newSession);
+    setSession(newSession);
+    applyRoleDefaults(newSession);
+  };
+
+  const handleLogout = () => {
+    clearCustomSession();
+    setSession(null);
+    setDpId(null);
+    setLunasId(null);
+    setProgressId(null);
+    setPreviewId(null);
+    setFakturId(null);
+    setNotaId(null);
+    setIsNewOrderOpen(false);
+  };
+
+  /* ---------- Efek: tema, scroll lock, tombol Escape ---------- */
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode);
+    try {
+      localStorage.setItem(THEME_KEY, darkMode ? 'dark' : 'light');
+    } catch {
+      /* abaikan */
+    }
+  }, [darkMode]);
+
+  useEffect(() => {
+    document.body.style.overflow = anyModalOpen ? 'hidden' : '';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [anyModalOpen]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setPreviewId(null);
+      setDpId(null);
+      setLunasId(null);
+      setFakturId(null);
+      setNotaId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  /* ---------- Mutasi data (Terhubung ke Supabase DB Mitra & CRM) ---------- */
+
+  const updateCustomOrder = (id: string, patch: (o: CustomOrderItem) => CustomOrderItem) => {
+    let updatedItem: CustomOrderItem | null = null;
+    const next = customOrders.map((o) => {
+      if (o.id === id) {
+        updatedItem = patch(o);
+        return updatedItem;
+      }
+      return o;
+    });
+    setCustomOrders(next);
+    saveCustomOrders(next);
+    if (updatedItem) {
+      syncCustomOrderToSupabase(updatedItem, session);
+    }
+  };
+
   const handleAddNewCustomOrder = (newOrder: CustomOrderItem) => {
-    const updated = [newOrder, ...customOrders];
-    setCustomOrders(updated);
-    saveCustomOrders(updated);
-    setIsNewOrderModalOpen(false);
-    setSelectedDpModalOrder(newOrder);
+    const orderWithFlag: CustomOrderItem = { ...newOrder, syncedToSupabase: true };
+    const next = [orderWithFlag, ...customOrders];
+    setCustomOrders(next);
+    saveCustomOrders(next);
+    setIsNewOrderOpen(false);
+    setDpId(orderWithFlag.id);
+    syncCustomOrderToSupabase(orderWithFlag, session);
   };
 
-  const handleConfirmDpPayment = (orderId: string) => {
-    const now = new Date();
-    const formattedDate = `${now.toISOString().split('T')[0]} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const updated = customOrders.map((ord) => {
-      if (ord.id === orderId) {
-        return {
-          ...ord,
-          dpInvoice: {
-            ...ord.dpInvoice,
-            status: 'terkonfirmasi' as const,
-            paidAt: `${formattedDate} WIB`,
-          },
-          designStatus: 'siap_cetak' as const,
-          updatedAt: formattedDate,
-        };
-      }
-      return ord;
-    });
-    setCustomOrders(updated);
-    saveCustomOrders(updated);
-    if (selectedDpModalOrder?.id === orderId) {
-      setSelectedDpModalOrder(updated.find((o) => o.id === orderId) || null);
+  const handleConfirmDp = (orderId: string) => {
+    if (!rolePerms.canConfirmPayment) {
+      alert('Hanya role Admin Pusat atau Finance yang dapat mengonfirmasi pembayaran DP.');
+      return;
     }
+    const stamp = nowStamp();
+    updateCustomOrder(orderId, (o) => ({
+      ...o,
+      dpInvoice: { ...o.dpInvoice, status: 'terkonfirmasi', paidAt: `${stamp} WIB` },
+      designStatus: 'siap_cetak',
+      updatedAt: stamp,
+    }));
   };
 
-  const handleConfirmLunasPayment = (orderId: string) => {
-    const now = new Date();
-    const formattedDate = `${now.toISOString().split('T')[0]} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const updated = customOrders.map((ord) => {
-      if (ord.id === orderId) {
-        return {
-          ...ord,
-          lunasInvoice: {
-            ...ord.lunasInvoice,
-            status: 'terkonfirmasi' as const,
-            paidAt: `${formattedDate} WIB`,
-          },
-          workProgress: {
-            ...ord.workProgress,
-            step: 'done' as const,
-            updatedAt: formattedDate,
-          },
-          updatedAt: formattedDate,
-        };
-      }
-      return ord;
-    });
-    setCustomOrders(updated);
-    saveCustomOrders(updated);
-    if (selectedLunasModalOrder?.id === orderId) {
-      setSelectedLunasModalOrder(updated.find((o) => o.id === orderId) || null);
+  const handleConfirmLunas = (orderId: string) => {
+    if (!rolePerms.canConfirmPayment) {
+      alert('Hanya role Admin Pusat atau Finance yang dapat mengonfirmasi pelunasan akhir.');
+      return;
     }
+    const order = customOrders.find((o) => o.id === orderId);
+    if (!order || order.dpInvoice.status !== 'terkonfirmasi') {
+      alert('Pembayaran DP harus dikonfirmasi terlebih dahulu.');
+      return;
+    }
+    const stamp = nowStamp();
+    updateCustomOrder(orderId, (o) => ({
+      ...o,
+      lunasInvoice: { ...o.lunasInvoice, status: 'terkonfirmasi', paidAt: `${stamp} WIB` },
+      workProgress: { ...o.workProgress, step: 'done', updatedAt: stamp },
+      updatedAt: stamp,
+    }));
   };
 
-  const handleUpdateProgress = (orderId: string, updatedProgress: CustomOrderItem['workProgress']) => {
-    const now = new Date();
-    const formattedDate = `${now.toISOString().split('T')[0]} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const updated = customOrders.map((ord) => {
-      if (ord.id === orderId) {
-        return {
-          ...ord,
-          workProgress: updatedProgress,
-          updatedAt: formattedDate,
-        };
-      }
-      return ord;
-    });
-    setCustomOrders(updated);
-    saveCustomOrders(updated);
-    setSelectedProgressModalOrder(null);
+  const handleUpdateProgress = (orderId: string, progress: CustomOrderItem['workProgress']) => {
+    updateCustomOrder(orderId, (o) => ({ ...o, workProgress: progress, updatedAt: progress.updatedAt }));
+    setProgressId(null);
   };
 
   const handleCompleteHandover = (orderId: string, reiOfficer: string, bprsOfficer: string, notes: string) => {
-    const today = new Date().toISOString().split('T')[0];
-    const updated = bprsCicilanOrders.map((c) => {
-      if (c.id === orderId) {
-        return {
-          ...c,
-          isHandoverCompleted: true,
-          notaHandoverDate: today,
-          handoverReiOfficer: reiOfficer,
-          handoverBprsOfficer: bprsOfficer,
-          handoverNotes: notes,
-        };
-      }
-      return c;
-    });
-    setBprsCicilanOrders(updated);
-    saveBprsCicilanOrders(updated);
-    if (selectedNotaReiOrder?.id === orderId) {
-      setSelectedNotaReiOrder(updated.find((o) => o.id === orderId) || null);
-    }
+    const next = bprsOrders.map((c) =>
+      c.id === orderId
+        ? {
+            ...c,
+            isHandoverCompleted: true,
+            notaHandoverDate: toLocalDateISO(),
+            handoverReiOfficer: reiOfficer,
+            handoverBprsOfficer: bprsOfficer,
+            handoverNotes: notes,
+          }
+        : c
+    );
+    setBprsOrders(next);
+    saveBprsCicilanOrders(next);
   };
 
-  const filteredCustomOrders = customOrders.filter((ord) => {
-    const matchesSearch =
-      ord.customerName.toLowerCase().includes(customSearch.toLowerCase()) ||
-      ord.orderNumber.toLowerCase().includes(customSearch.toLowerCase()) ||
-      ord.customerPhone.includes(customSearch);
-    const matchesBranch =
-      customBranchFilter === 'ALL' || ord.branchRei.toLowerCase().includes(customBranchFilter.toLowerCase());
-    const matchesStep =
-      customStepFilter === 'ALL' || ord.workProgress.step === customStepFilter;
-    return matchesSearch && matchesBranch && matchesStep;
-  });
+  /* ---------- Filter ---------- */
 
-  const filteredBprsOrders = bprsCicilanOrders.filter((ord) => {
-    const matchesSearch =
-      ord.customerName.toLowerCase().includes(bprsSearch.toLowerCase()) ||
-      ord.contractNumber.toLowerCase().includes(bprsSearch.toLowerCase()) ||
-      ord.bprsName.toLowerCase().includes(bprsSearch.toLowerCase()) ||
-      ord.goldSerialNumbers.some((s) => s.toLowerCase().includes(bprsSearch.toLowerCase()));
-    const matchesInstitution =
-      bprsInstitutionFilter === 'ALL' || ord.bprsId === bprsInstitutionFilter;
-    const matchesBranch =
-      bprsBranchFilter === 'ALL' || ord.branchRei.toLowerCase().includes(bprsBranchFilter.toLowerCase());
-    return matchesSearch && matchesInstitution && matchesBranch;
-  });
+  const filteredCustom = useMemo(() => {
+    const q = customSearch.trim().toLowerCase();
+    return customOrders.filter((o) => {
+      const matchesSearch =
+        !q ||
+        o.customerName.toLowerCase().includes(q) ||
+        o.orderNumber.toLowerCase().includes(q) ||
+        o.customerPhone.includes(q);
+      const matchesBranch = customBranch === 'ALL' || o.branchRei === customBranch;
+      const matchesStep = customStep === 'ALL' || o.workProgress.step === customStep;
+      return matchesSearch && matchesBranch && matchesStep;
+    });
+  }, [customOrders, customSearch, customBranch, customStep]);
+
+  const filteredBprs = useMemo(() => {
+    const q = bprsSearch.trim().toLowerCase();
+    return bprsOrders.filter((o) => {
+      const matchesSearch =
+        !q ||
+        o.customerName.toLowerCase().includes(q) ||
+        o.contractNumber.toLowerCase().includes(q) ||
+        o.bprsName.toLowerCase().includes(q) ||
+        o.goldSerialNumbers.some((s) => s.toLowerCase().includes(q));
+      const matchesInstitution = bprsInstitution === 'ALL' || o.bprsId === bprsInstitution;
+      const matchesBranch = bprsBranch === 'ALL' || o.branchRei === bprsBranch;
+      const matchesHandover =
+        bprsHandover === 'ALL' || (bprsHandover === 'done' ? o.isHandoverCompleted : !o.isHandoverCompleted);
+      return matchesSearch && matchesInstitution && matchesBranch && matchesHandover;
+    });
+  }, [bprsOrders, bprsSearch, bprsInstitution, bprsBranch, bprsHandover]);
+
+  const customFilterActive = !!customSearch || customBranch !== 'ALL' || customStep !== 'ALL';
+  const bprsFilterActive = !!bprsSearch || bprsInstitution !== 'ALL' || bprsBranch !== 'ALL' || bprsHandover !== 'ALL';
+
+  const resetCustomFilter = () => {
+    setCustomSearch('');
+    setCustomBranch('ALL');
+    setCustomStep('ALL');
+  };
+  const resetBprsFilter = () => {
+    setBprsSearch('');
+    setBprsInstitution('ALL');
+    setBprsBranch('ALL');
+    setBprsHandover('ALL');
+  };
+
+  /* ---------- Ringkasan ---------- */
+
+  const customStats = useMemo(() => {
+    const inProgress = customOrders.filter((o) => o.workProgress.step !== 'done').length;
+    const dpPending = customOrders.filter((o) => o.dpInvoice.status !== 'terkonfirmasi');
+    const outstanding = customOrders
+      .filter((o) => o.lunasInvoice.status !== 'terkonfirmasi')
+      .reduce((sum, o) => sum + o.lunasInvoice.remainingAmount, 0);
+    return { inProgress, dpPending: dpPending.length, outstanding, done: customOrders.length - inProgress };
+  }, [customOrders]);
+
+  const bprsStats = useMemo(() => {
+    const pendingHandover = bprsOrders.filter((o) => !o.isHandoverCompleted).length;
+    const totalGram = bprsOrders.reduce((sum, o) => sum + o.goldGram, 0);
+    const totalValue = bprsOrders.reduce((sum, o) => sum + o.totalValue, 0);
+    const institutions = new Set(bprsOrders.map((o) => o.bprsId)).size;
+    return { pendingHandover, totalGram, totalValue, institutions };
+  }, [bprsOrders]);
+
+  const bprsCountById = useMemo(() => {
+    const map: Record<string, number> = {};
+    bprsOrders.forEach((o) => (map[o.bprsId] = (map[o.bprsId] || 0) + 1));
+    return map;
+  }, [bprsOrders]);
+
+  /* ---------- Auth Gate: Tampilkan Login jika belum login ---------- */
+
+  if (!session) {
+    return (
+      <LoginPage
+        onLogin={handleLogin}
+        darkMode={darkMode}
+        onToggleDarkMode={() => setDarkMode((v) => !v)}
+      />
+    );
+  }
+
+  /* ---------- Render Dashboard Utama ---------- */
 
   return (
-    <div className={`min-h-screen ${darkMode ? 'dark bg-[#0f0b1a] text-gray-100' : 'bg-[#f8f7fc] text-gray-900'}`}>
-      {/* Navbar Standalone */}
-      <nav className={`sticky top-0 z-40 border-b backdrop-blur-xl ${darkMode ? 'bg-[#151022]/90 border-purple-800/40 text-gray-100' : 'bg-white/90 border-purple-100 text-gray-900'}`}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-800 to-indigo-700 flex items-center justify-center text-amber-300 font-black shadow-md shadow-purple-900/30">
-              <Sparkles className="w-5 h-5" />
+    <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-[#0e0c14] dark:text-gray-100">
+      {/* Header */}
+      <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/90 backdrop-blur dark:border-white/10 dark:bg-[#0e0c14]/90 print:hidden">
+        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-purple-700 text-xs font-bold text-white">
+              {session.avatarBadge}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-black text-sm tracking-tight text-purple-950 dark:text-purple-200 uppercase">
-                  Emas-Custom & BPRS
-                </span>
-                <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-purple-100 text-purple-800 border border-purple-300 dark:bg-purple-900 dark:text-purple-200 dark:border-purple-700">
-                  Raja Emas Indonesia
+            <div className="min-w-0 leading-tight">
+              <div className="flex items-center gap-1.5">
+                <span className="truncate text-sm font-semibold">Emas Custom</span>
+                <span className={`hidden rounded px-1.5 py-0.5 text-[10px] font-bold sm:inline-block ${rolePerms.badgeColor}`}>
+                  {rolePerms.label}
                 </span>
               </div>
-              <p className="text-[11px] text-gray-500">
-                Sistem Terpadu Pesanan Custom Cabang REI & Cicilan BPRS
-              </p>
+              <div className="truncate text-[11px] text-gray-500 dark:text-gray-400">
+                {session.name} · {session.partnerName || 'Raja Emas Indonesia'}
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Indikator & Tombol Sync Live DB */}
             <button
-              onClick={() => {
-                const next = !darkMode;
-                setDarkMode(next);
-                if (next) document.documentElement.classList.add('dark');
-                else document.documentElement.classList.remove('dark');
-              }}
-              className="p-2 rounded-xl border border-gray-200 dark:border-purple-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-purple-950/50"
-              title="Toggle Dark Mode"
+              onClick={syncWithDatabase}
+              disabled={isSyncing}
+              className="hidden items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 md:inline-flex"
+              title={dbStatus?.message || 'Sinkronisasi Database Mitra & CRM'}
             >
-              {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-purple-700" />}
+              <Database className={`h-3.5 w-3.5 ${dbStatus?.connected ? 'text-emerald-500' : 'text-amber-500'}`} />
+              <span>{isSyncing ? 'Syncing…' : dbStatus?.connected ? 'DB Mitra & CRM' : 'Offline Cache'}</span>
+              <RefreshCw className={`h-3 w-3 text-gray-400 ${isSyncing ? 'animate-spin' : ''}`} />
             </button>
 
-            <button
-              onClick={() => setIsNewOrderModalOpen(true)}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-800 hover:to-indigo-800 text-white font-bold text-xs shadow-md shadow-purple-700/20 flex items-center gap-1.5 active:scale-95 transition-transform"
+            {/* Cross-Links ke Dasbor Mitra & CRM */}
+            <a
+              href={MITRA_DASHBOARD_URL}
+              target="_blank"
+              rel="noreferrer"
+              className={`${btnCls} hidden lg:inline-flex`}
+              title="Buka Dasbor Mitra"
             >
-              <Plus className="w-4 h-4 text-amber-300" />
-              <span>+ Pesanan Custom Baru</span>
+              Dasbor Mitra <ExternalLink className="h-3 w-3" />
+            </a>
+            <a
+              href={CRM_DASHBOARD_URL}
+              target="_blank"
+              rel="noreferrer"
+              className={`${btnCls} hidden lg:inline-flex`}
+              title="Buka CRM Pembiayaan Emas"
+            >
+              CRM <ExternalLink className="h-3 w-3" />
+            </a>
+
+            <button
+              onClick={() => setDarkMode((v) => !v)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/5"
+              aria-label={darkMode ? 'Mode terang' : 'Mode gelap'}
+              title={darkMode ? 'Mode terang' : 'Mode gelap'}
+            >
+              {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
+
+            {rolePerms.canCreateOrder && (
+              <button
+                onClick={() => setIsNewOrderOpen(true)}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-purple-700 px-3 text-xs font-semibold text-white transition hover:bg-purple-800"
+              >
+                <Plus className="h-4 w-4" />
+                <span className="hidden sm:inline">Pesanan Custom</span>
+                <span className="sm:hidden">Baru</span>
+              </button>
+            )}
+
+            <button
+              onClick={handleLogout}
+              className="inline-flex h-8 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-medium text-red-600 transition hover:bg-red-100 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-400"
+              title="Keluar / Ganti Akun"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Keluar</span>
             </button>
           </div>
         </div>
-      </nav>
+      </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6 pb-16">
-        {/* Banner Section */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-900 text-white p-6 sm:p-8 shadow-xl border border-purple-800/40">
-          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-2 max-w-2xl">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-800/60 border border-purple-400/30 text-amber-300 text-xs font-semibold backdrop-blur-sm">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Sentra Produksi Custom & Pembiayaan BPRS</span>
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-                Platform Khusus Emas-Custom & Cicilan BPRS
-              </h1>
-              <p className="text-xs sm:text-sm text-purple-200/90 leading-relaxed">
-                Aplikasi standalone untuk pemesanan custom logam mulia perorangan cabang REI serta pengelolaan faktur website & nota serah terima fisik emas cicilan BPRS.
-              </p>
+      <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 pb-16 sm:px-6 print:hidden">
+        {/* Judul + tab */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg font-semibold">Dashboard</h1>
+              <span className="rounded-md bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">
+                Role: {rolePerms.label}
+              </span>
             </div>
-
-            <div className="grid grid-cols-2 gap-3 shrink-0">
-              <div className="p-3.5 rounded-2xl bg-purple-900/50 border border-purple-700/40 text-center">
-                <span className="text-purple-300 text-[10px] uppercase font-bold block">Pesanan Custom</span>
-                <span className="text-xl font-black text-white">{customOrders.length}</span>
-              </div>
-              <div className="p-3.5 rounded-2xl bg-purple-900/50 border border-purple-700/40 text-center">
-                <span className="text-purple-300 text-[10px] uppercase font-bold block">Akad BPRS</span>
-                <span className="text-xl font-black text-amber-300">{bprsCicilanOrders.length}</span>
-              </div>
-            </div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {activeTab === 'custom'
+                ? 'Pesanan emas custom perorangan dari cabang REI.'
+                : 'Pembiayaan cicilan emas lewat mitra BPRS (Sinkron DB Mitra & CRM).'}
+            </p>
           </div>
-        </div>
 
-        {/* Tab Buttons Switcher */}
-        <div className="flex border-b border-gray-200 dark:border-purple-800/50">
-          <button
-            onClick={() => setActiveTab('custom_perorangan')}
-            className={`py-3 px-5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition-all ${
-              activeTab === 'custom_perorangan'
-                ? 'border-purple-600 text-purple-700 dark:text-purple-300 bg-purple-50/50 dark:bg-purple-950/30'
-                : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
-            }`}
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>Pemesanan Custom Perorangan (Cabang REI)</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 font-bold">
-              {customOrders.length}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('cicilan_bprs')}
-            className={`py-3 px-5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition-all ${
-              activeTab === 'cicilan_bprs'
-                ? 'border-blue-600 text-blue-700 dark:text-blue-300 bg-blue-50/50 dark:bg-blue-950/30'
-                : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
-            }`}
-          >
-            <Building2 className="w-4 h-4" />
-            <span>Pemesanan Cicilan Emas Lewat BPRS</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 font-bold">
-              {bprsCicilanOrders.length}
-            </span>
-          </button>
-        </div>
-
-        {/* TAB 1: PEMESANAN CUSTOM PERORANGAN DARI CABANG REI */}
-        {activeTab === 'custom_perorangan' && (
-          <div className="space-y-4">
-            {/* Filter Bar */}
-            <div className="soft-card p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-3">
-              <div className="relative w-full md:w-72">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Cari nama pemesan / no. order..."
-                  value={customSearch}
-                  onChange={(e) => setCustomSearch(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 dark:border-purple-800 text-xs focus:border-purple-600 focus:ring-1 focus:ring-purple-600 bg-white dark:bg-[#151022]"
-                />
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
-                <div className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
-                  <Building2 className="w-3.5 h-3.5 text-purple-600" />
-                  <span className="font-semibold">Cabang REI:</span>
-                </div>
-                <select
-                  value={customBranchFilter}
-                  onChange={(e) => setCustomBranchFilter(e.target.value)}
-                  className="px-3 py-1.5 rounded-xl border border-gray-200 dark:border-purple-800 text-xs bg-white dark:bg-[#151022] font-medium text-gray-700 dark:text-gray-300"
-                >
-                  <option value="ALL">Semua Cabang REI</option>
-                  {REI_BRANCHES.map((b) => (
-                    <option key={b.id} value={b.name.split(' ')[1] || b.name}>
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
-
-                <div className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300 ml-2">
-                  <Filter className="w-3.5 h-3.5 text-purple-600" />
-                  <span className="font-semibold">Tahap:</span>
-                </div>
-                <select
-                  value={customStepFilter}
-                  onChange={(e) => setCustomStepFilter(e.target.value)}
-                  className="px-3 py-1.5 rounded-xl border border-gray-200 dark:border-purple-800 text-xs bg-white dark:bg-[#151022] font-medium text-gray-700 dark:text-gray-300"
-                >
-                  <option value="ALL">Semua Tahapan</option>
-                  <option value="design">1. Pengerjaan Design</option>
-                  <option value="produksi">2. Pengerjaan Produksi</option>
-                  <option value="pengiriman">3. Pengiriman (Helper/JNE)</option>
-                  <option value="done">4. Done (Selesai)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Custom Cards */}
-            <div className="space-y-4">
-              {filteredCustomOrders.map((ord) => {
-                const isDpPaid = ord.dpInvoice.status === 'terkonfirmasi';
-                const isLunasPaid = ord.lunasInvoice.status === 'terkonfirmasi';
-
+          <div className="inline-flex self-start rounded-lg border border-gray-200 bg-white p-0.5 dark:border-white/10 dark:bg-[#16131f]" role="tablist">
+            {[
+              { key: 'custom' as const, label: 'Custom Perorangan', count: customOrders.length, visible: true },
+              { key: 'bprs' as const, label: 'Cicilan BPRS', count: bprsOrders.length, visible: rolePerms.canViewBprsTab },
+            ]
+              .filter((t) => t.visible)
+              .map((t) => {
+                const active = activeTab === t.key;
                 return (
-                  <div
-                    key={ord.id}
-                    className="soft-card-elevated rounded-2xl p-5 border border-purple-100 dark:border-purple-900/40 space-y-4 hover:shadow-lg transition-all"
+                  <button
+                    key={t.key}
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setActiveTab(t.key)}
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition ${
+                      active
+                        ? 'bg-purple-700 text-white'
+                        : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
+                    }`}
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 dark:border-purple-900/30 pb-3">
-                      <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-300 font-black flex items-center justify-center shrink-0 text-sm">
-                          {ord.goldGram}g
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-extrabold text-sm text-gray-900 dark:text-gray-100">{ord.customerName}</span>
-                            <span className="text-[11px] font-mono text-gray-500 bg-gray-100 dark:bg-purple-950 px-2 py-0.5 rounded">
-                              {ord.orderNumber}
-                            </span>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-300 border border-purple-200 dark:border-purple-700">
-                              {ord.branchRei}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-gray-500 flex items-center gap-2 mt-0.5">
-                            <span className="flex items-center gap-1 font-mono text-gray-600 dark:text-gray-400">
-                              <Phone className="w-3 h-3 text-emerald-600" />
-                              {ord.customerPhone}
-                            </span>
-                            <span>•</span>
-                            <span className="text-gray-400">Dibuat: {ord.createdAt}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => setSelectedProgressModalOrder(ord)}
-                        className="px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/60 dark:hover:bg-purple-900/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-xs font-bold flex items-center gap-1.5 transition-colors self-end sm:self-auto"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        <span>Update Pengerjaan</span>
-                      </button>
-                    </div>
-
-                    {/* 5 Ketentuan Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-xs">
-                      {/* 1. INVOICE DP */}
-                      <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-purple-950/20 border border-gray-200 dark:border-purple-900/30 flex flex-col justify-between space-y-2">
-                        <div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                              1. Invoice DP
-                            </span>
-                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${isDpPaid ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-800'}`}>
-                              {isDpPaid ? 'DP LUNAS' : 'PENDING'}
-                            </span>
-                          </div>
-                          <div className="font-mono font-bold text-gray-900 dark:text-gray-100 mt-1">
-                            {formatRupiah(ord.dpInvoice.dpAmount)}
-                          </div>
-                          <div className="text-[10px] text-gray-500">
-                            DP {ord.dpInvoice.dpPercentage}% • Jatuh Tempo {ord.dpInvoice.dueDate}
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() => setSelectedDpModalOrder(ord)}
-                          className="w-full py-1.5 px-2 rounded-lg bg-white dark:bg-purple-900/40 border border-purple-300 dark:border-purple-700 text-purple-900 dark:text-purple-200 text-[11px] font-bold hover:bg-purple-50 flex items-center justify-center gap-1"
-                        >
-                          <FileText className="w-3 h-3 text-purple-600 dark:text-purple-400" />
-                          <span>Buka Invoice DP</span>
-                        </button>
-                      </div>
-
-                      {/* 2. DETAIL REQUEST LM */}
-                      <div className="p-3.5 rounded-xl bg-purple-50/60 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/40 flex flex-col justify-between space-y-2">
-                        <div>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-purple-900 dark:text-purple-300 block">
-                            2. Request LM Custom
-                          </span>
-                          <div className="font-bold text-gray-900 dark:text-gray-100 mt-1 truncate">
-                            {ord.goldType}
-                          </div>
-                          <div className="text-[11px] text-purple-700 dark:text-purple-400 font-semibold mt-0.5">
-                            {ord.goldGram}g Fine Gold ({ord.quantity} pcs)
-                          </div>
-                          <p className="text-[10px] text-gray-600 dark:text-gray-400 italic line-clamp-2 mt-1">
-                            "{ord.requestDetails}"
-                          </p>
-                        </div>
-                        <div className="text-[10px] text-gray-500 font-mono">
-                          Cabang: {ord.branchRei.split(' ')[0]} {ord.branchRei.split(' ')[1] || ''}
-                        </div>
-                      </div>
-
-                      {/* 3. FINAL DESAIN CETAK */}
-                      <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-purple-950/20 border border-gray-200 dark:border-purple-900/30 flex flex-col justify-between space-y-2">
-                        <div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                              3. Final Desain
-                            </span>
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">
-                              Siap Cetak
-                            </span>
-                          </div>
-                          <div
-                            onClick={() => setPreviewDesignUrl(ord.finalDesignUrl)}
-                            className="mt-1.5 relative rounded-lg overflow-hidden border border-gray-300 h-14 bg-gray-950 flex items-center justify-center cursor-pointer group"
-                          >
-                            <img src={ord.finalDesignUrl} alt="Desain" className="h-full w-full object-cover group-hover:scale-105 transition-transform" />
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold">
-                              <Eye className="w-3.5 h-3.5 mr-1" /> Lihat
-                            </div>
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() => window.open(ord.finalDesignUrl, '_blank')}
-                          className="w-full py-1.5 px-2 rounded-lg bg-white dark:bg-purple-900/40 border border-gray-300 dark:border-purple-700 text-gray-700 dark:text-gray-200 text-[10px] font-semibold hover:bg-gray-100 flex items-center justify-center gap-1"
-                        >
-                          <Download className="w-3 h-3" />
-                          <span>Unduh File Cetak</span>
-                        </button>
-                      </div>
-
-                      {/* 4. PROSES PENGERJAAN & PENGIRIMAN */}
-                      <div className="p-3.5 rounded-xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/40 flex flex-col justify-between space-y-2">
-                        <div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-900 dark:text-blue-300">
-                              4. Pengerjaan
-                            </span>
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">
-                              {ord.workProgress.step.toUpperCase()}
-                            </span>
-                          </div>
-
-                          <div className="mt-1 font-bold text-gray-900 dark:text-gray-100 text-[11px]">
-                            {ord.workProgress.step === 'design' && '1. Desain Grafir'}
-                            {ord.workProgress.step === 'produksi' && '2. Produksi & Cetak'}
-                            {ord.workProgress.step === 'pengiriman' && '3. Pengiriman'}
-                            {ord.workProgress.step === 'done' && '4. Selesai / Diterima'}
-                          </div>
-
-                          {ord.workProgress.shippingMethod && (
-                            <div className="mt-1 p-1.5 rounded bg-white/80 dark:bg-gray-900/80 border border-blue-200 dark:border-blue-900 text-[10px]">
-                              {ord.workProgress.shippingMethod === 'jne' ? (
-                                <div>
-                                  <span className="font-bold text-blue-900 dark:text-blue-300 flex items-center gap-1">
-                                    <Truck className="w-3 h-3 text-blue-600" /> JNE Express
-                                  </span>
-                                  <div className="font-mono text-gray-700 dark:text-gray-300 truncate">
-                                    Resi: {ord.workProgress.jneResiNumber || '-'}
-                                  </div>
-                                </div>
-                              ) : (
-                                <div>
-                                  <span className="font-bold text-blue-900 dark:text-blue-300 flex items-center gap-1">
-                                    <Truck className="w-3 h-3 text-blue-600" /> Helper REI
-                                  </span>
-                                  <div className="text-gray-600 dark:text-gray-400 truncate">{ord.workProgress.helperName}</div>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="text-[10px] text-gray-500 truncate">
-                          Ket: {ord.workProgress.notes || '-'}
-                        </div>
-                      </div>
-
-                      {/* 5. INVOICE LUNAS */}
-                      <div className="p-3.5 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40 flex flex-col justify-between space-y-2">
-                        <div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
-                              5. Invoice Lunas
-                            </span>
-                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${isLunasPaid ? 'bg-emerald-200 text-emerald-950' : 'bg-gray-100 text-gray-700'}`}>
-                              {isLunasPaid ? 'LUNAS 100%' : 'SISA TAGIHAN'}
-                            </span>
-                          </div>
-                          <div className="font-mono font-bold text-emerald-950 dark:text-emerald-300 mt-1">
-                            {formatRupiah(ord.lunasInvoice.remainingAmount)}
-                          </div>
-                          <div className="text-[10px] text-gray-500">
-                            Total: {formatRupiah(ord.totalPrice)}
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() => setSelectedLunasModalOrder(ord)}
-                          className="w-full py-1.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold flex items-center justify-center gap-1"
-                        >
-                          <FileText className="w-3 h-3" />
-                          <span>Buka Invoice Lunas</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+                    {t.label}
+                    <span className={`text-xs tabular-nums ${active ? 'text-purple-200' : 'text-gray-400'}`}>{t.count}</span>
+                  </button>
                 );
               })}
-            </div>
+          </div>
+        </div>
+
+        {/* Ringkasan */}
+        {activeTab === 'custom' ? (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatCard icon={Package} label="Total pesanan" value={customOrders.length} hint={`${customStats.done} selesai`} />
+            <StatCard icon={Clock} label="Sedang diproses" value={customStats.inProgress} hint="Desain, produksi, kirim" />
+            <StatCard icon={FileText} label="Menunggu DP" value={customStats.dpPending} hint="Belum dikonfirmasi" />
+            <StatCard icon={Wallet} label="Sisa tagihan" value={formatRupiah(customStats.outstanding)} hint="Invoice lunas pending" />
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatCard icon={Users} label="Total akad" value={bprsOrders.length} hint={`${bprsStats.institutions} lembaga BPRS`} />
+            <StatCard icon={Award} label="Belum serah terima" value={bprsStats.pendingHandover} hint="Fisik emas di khazanah" />
+            <StatCard icon={Scale} label="Total emas" value={`${bprsStats.totalGram} g`} hint="Semua akad" />
+            <StatCard icon={Coins} label="Nilai pembiayaan" value={formatRupiah(bprsStats.totalValue)} hint="Total nilai akad" />
           </div>
         )}
 
-        {/* TAB 2: PEMESANAN CICILAN EMAS LEWAT BPRS */}
-        {activeTab === 'cicilan_bprs' && (
-          <div className="space-y-6">
-            {/* 1. List BPRS seluruhnya */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-blue-700" />
-                    <span>1. Daftar Seluruh Lembaga BPRS Konsorsium</span>
-                  </h3>
-                  <p className="text-xs text-gray-500">
-                    Daftar seluruh instansi BPRS mitra resmi Raja Emas Indonesia
-                  </p>
-                </div>
-                <span className="text-xs text-blue-700 font-bold bg-blue-50 dark:bg-blue-950 dark:text-blue-300 px-2.5 py-1 rounded-full border border-blue-200 dark:border-blue-800">
-                  Total {BPRS_INSTITUTIONS.length} BPRS Mitra
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {BPRS_INSTITUTIONS.map((bprs) => {
-                  const isSelected = bprsInstitutionFilter === bprs.id;
-                  return (
-                    <div
-                      key={bprs.id}
-                      onClick={() => setBprsInstitutionFilter(isSelected ? 'ALL' : bprs.id)}
-                      className={`p-4 rounded-2xl border transition-all cursor-pointer ${
-                        isSelected
-                          ? 'bg-blue-50/80 dark:bg-blue-950/60 border-blue-600 shadow-md ring-2 ring-blue-600/30'
-                          : 'bg-white dark:bg-[#151022] border-gray-200 dark:border-purple-800/40 hover:border-blue-300'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/60 text-blue-900 dark:text-blue-200 font-bold text-xs flex items-center justify-center shrink-0">
-                          {bprs.code.split('-')[0]}
-                        </div>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
-                          {bprs.city}
-                        </span>
-                      </div>
-                      <div className="mt-2.5">
-                        <h4 className="font-bold text-xs text-gray-900 dark:text-gray-100 truncate">{bprs.name}</h4>
-                        <p className="text-[11px] text-gray-500 truncate mt-0.5">PIC: {bprs.contactPerson}</p>
-                      </div>
-                      <div className="mt-3 pt-2.5 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between text-[11px]">
-                        <div>
-                          <span className="text-gray-400 block text-[10px]">Akad Aktif</span>
-                          <span className="font-bold text-blue-950 dark:text-blue-300">{bprs.totalActiveContracts} Nasabah</span>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-gray-400 block text-[10px]">Total Gramasi</span>
-                          <span className="font-bold text-amber-700 dark:text-amber-400">{bprs.totalGramsFinanced}g LM</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 2. Filter Cabang REI */}
-            <div className="soft-card p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-3 border border-blue-100 dark:border-blue-900/40">
-              <div className="relative w-full md:w-80">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        {/* Tabel */}
+        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-white/10 dark:bg-[#16131f]">
+          {/* Filter bar */}
+          <div className="flex flex-col gap-2 border-b border-gray-200 p-3 dark:border-white/10 md:flex-row md:items-center">
+            <div className="relative md:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              {activeTab === 'custom' ? (
                 <input
-                  type="text"
-                  placeholder="Cari nasabah BPRS, no. akad, nomor seri LM..."
+                  type="search"
+                  placeholder="Cari nama, no. order, no. HP…"
+                  value={customSearch}
+                  onChange={(e) => setCustomSearch(e.target.value)}
+                  className={`${inputCls} w-full pl-9`}
+                />
+              ) : (
+                <input
+                  type="search"
+                  placeholder="Cari nasabah, no. akad, no. seri…"
                   value={bprsSearch}
                   onChange={(e) => setBprsSearch(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 dark:border-purple-800 text-xs focus:border-blue-600 focus:ring-1 focus:ring-blue-600 bg-white dark:bg-[#151022]"
+                  className={`${inputCls} w-full pl-9`}
                 />
-              </div>
+              )}
+            </div>
 
-              <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-                <div className="flex items-center gap-1.5 text-xs text-gray-700 dark:text-gray-300 bg-amber-50 dark:bg-amber-950/40 px-3 py-1.5 rounded-xl border border-amber-200 dark:border-amber-800">
-                  <Building2 className="w-4 h-4 text-amber-700" />
-                  <span className="font-bold text-amber-950 dark:text-amber-300">2. Filter Cabang REI:</span>
-                  <select
-                    value={bprsBranchFilter}
-                    onChange={(e) => setBprsBranchFilter(e.target.value)}
-                    className="px-2 py-1 rounded-lg border border-amber-300 dark:border-amber-700 text-xs bg-white dark:bg-[#151022] font-bold text-amber-950 dark:text-amber-200"
-                  >
-                    <option value="ALL">Semua Cabang REI</option>
+            <div className="grid grid-cols-2 gap-2 md:flex md:flex-1 md:items-center">
+              {activeTab === 'custom' ? (
+                <>
+                  <select value={customBranch} onChange={(e) => setCustomBranch(e.target.value)} className={inputCls} aria-label="Filter cabang">
+                    <option value="ALL">Semua cabang</option>
                     {REI_BRANCHES.map((b) => (
-                      <option key={b.id} value={b.name.split(' ')[1] || b.name}>
-                        {b.name}
+                      <option key={b.id} value={b.name}>
+                        {shortBranch(b.name)}
                       </option>
                     ))}
                   </select>
-                </div>
-              </div>
+                  <select value={customStep} onChange={(e) => setCustomStep(e.target.value)} className={inputCls} aria-label="Filter tahap">
+                    <option value="ALL">Semua tahap</option>
+                    {STEPS.map((s, i) => (
+                      <option key={s.key} value={s.key}>
+                        {i + 1}. {s.label}
+                      </option>
+                    ))}
+                  </select>
+                  {customFilterActive && (
+                    <button onClick={resetCustomFilter} className={`${btnCls} col-span-2 justify-center md:col-span-1`}>
+                      <X className="h-3.5 w-3.5" /> Reset
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <select value={bprsInstitution} onChange={(e) => setBprsInstitution(e.target.value)} className={inputCls} aria-label="Filter lembaga BPRS">
+                    <option value="ALL">Semua BPRS ({bprsDirectory.length})</option>
+                    {bprsDirectory.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.shortName} ({bprsCountById[b.id] || 0})
+                      </option>
+                    ))}
+                  </select>
+                  <select value={bprsBranch} onChange={(e) => setBprsBranch(e.target.value)} className={inputCls} aria-label="Filter cabang">
+                    <option value="ALL">Semua cabang</option>
+                    {REI_BRANCHES.map((b) => (
+                      <option key={b.id} value={b.name}>
+                        {shortBranch(b.name)}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={bprsHandover}
+                    onChange={(e) => setBprsHandover(e.target.value as typeof bprsHandover)}
+                    className={inputCls}
+                    aria-label="Filter serah terima"
+                  >
+                    <option value="ALL">Semua status</option>
+                    <option value="pending">Belum serah terima</option>
+                    <option value="done">Sudah serah terima</option>
+                  </select>
+                  {bprsFilterActive && (
+                    <button onClick={resetBprsFilter} className={`${btnCls} justify-center`}>
+                      <X className="h-3.5 w-3.5" /> Reset
+                    </button>
+                  )}
+                </>
+              )}
             </div>
+          </div>
 
-            {/* 3 & 4. Table Faktur Web & Nota REI */}
-            <div className="soft-card-elevated rounded-2xl overflow-hidden border border-gray-200 dark:border-purple-900/40">
-              <div className="p-4 bg-gray-50 dark:bg-purple-950/30 border-b border-gray-200 dark:border-purple-900/40 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-xs text-gray-800 dark:text-gray-200">
-                    Daftar Transaksi Cicilan Emas BPRS (Cabang REI)
-                  </span>
-                  <div className="text-[11px] text-gray-500 mt-0.5">
-                    Menampilkan {filteredBprsOrders.length} transaksi pembiayaan cicilan emas
-                  </div>
-                </div>
-                <span className="text-[11px] font-semibold text-gray-500">
-                  Fitur: Cetak 3. Faktur Website & 4. Nota REI Fisik
-                </span>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-gray-100/70 dark:bg-purple-950/40 border-b border-gray-200 dark:border-purple-900/40 text-gray-600 dark:text-gray-400 font-bold uppercase text-[10px] tracking-wider">
-                    <tr>
-                      <th className="p-3.5">Nasabah & BPRS</th>
-                      <th className="p-3.5">Cabang Khazanah REI</th>
-                      <th className="p-3.5">Gramasi & Nomor Seri LM</th>
-                      <th className="p-3.5 text-center">Tenor & Cicilan</th>
-                      <th className="p-3.5 text-center">Status Serah Terima</th>
-                      <th className="p-3.5 text-right">Aksi Dokumen</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-purple-900/20">
-                    {filteredBprsOrders.map((ord) => (
-                      <tr key={ord.id} className="hover:bg-blue-50/30 dark:hover:bg-purple-950/30 transition-colors">
-                        <td className="p-3.5">
-                          <div className="font-bold text-gray-900 dark:text-gray-100 text-sm">{ord.customerName}</div>
-                          <div className="text-[11px] text-blue-900 dark:text-blue-300 font-semibold mt-0.5">{ord.bprsName}</div>
-                          <div className="text-[10px] text-gray-500 font-mono mt-0.5">{ord.contractNumber}</div>
-                        </td>
-
-                        <td className="p-3.5">
-                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-950 text-purple-900 dark:text-purple-300 font-bold border border-purple-200 dark:border-purple-800 text-[11px]">
-                            <Building2 className="w-3.5 h-3.5 text-purple-600" />
-                            <span>{ord.branchRei}</span>
+          <div className="overflow-x-auto">
+            {activeTab === 'custom' ? (
+              <table className="w-full min-w-[920px] text-left text-sm">
+                <thead className="bg-gray-50 text-xs font-medium text-gray-500 dark:bg-white/[0.02] dark:text-gray-400">
+                  <tr>
+                    <th className="px-4 py-2.5 font-medium">Pemesan</th>
+                    <th className="px-4 py-2.5 font-medium">Produk</th>
+                    <th className="px-4 py-2.5 font-medium">Tahap</th>
+                    <th className="px-4 py-2.5 font-medium">Pembayaran</th>
+                    <th className="px-4 py-2.5 text-right font-medium">Total</th>
+                    <th className="px-4 py-2.5 text-right font-medium">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                  {filteredCustom.length === 0 && <EmptyRow colSpan={6} onReset={customFilterActive ? resetCustomFilter : undefined} />}
+                  {filteredCustom.map((o) => {
+                    const dpPaid = o.dpInvoice.status === 'terkonfirmasi';
+                    const lunasPaid = o.lunasInvoice.status === 'terkonfirmasi';
+                    const wp = o.workProgress;
+                    return (
+                      <tr key={o.id} className="align-top transition hover:bg-gray-50/70 dark:hover:bg-white/[0.02]">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-gray-900 dark:text-gray-100">{o.customerName}</span>
+                            {o.syncedToSupabase && (
+                              <span title="Tersinkronisasi ke Database Mitra & CRM" className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+                            )}
                           </div>
-                          <div className="text-[10px] text-gray-400 mt-1">Tanggal: {ord.fakturDate}</div>
-                        </td>
-
-                        <td className="p-3.5">
-                          <div className="font-extrabold text-amber-700 dark:text-amber-400 text-xs">
-                            {ord.goldGram} Gram Fine Gold
-                          </div>
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {ord.goldSerialNumbers.map((sn, idx) => (
-                              <span key={idx} className="px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 font-mono text-[10px] font-bold text-amber-950 dark:text-amber-300">
-                                {sn}
-                              </span>
-                            ))}
+                          <div className="mt-0.5 font-mono text-[11px] text-gray-500 dark:text-gray-400">{o.orderNumber}</div>
+                          <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                            <Building2 className="h-3 w-3" />
+                            {shortBranch(o.branchRei)} · {o.customerPhone}
                           </div>
                         </td>
 
-                        <td className="p-3.5 text-center">
-                          <div className="font-bold text-gray-900 dark:text-gray-100">{ord.tenorMonths} Bulan</div>
-                          <div className="font-mono text-emerald-700 dark:text-emerald-400 font-bold mt-0.5">
-                            {formatRupiah(ord.monthlyInstallment)}/bln
-                          </div>
-                          <div className="text-[10px] text-gray-400 mt-0.5">
-                            Bayar: {ord.installmentsPaid}/{ord.totalInstallments}
-                          </div>
-                        </td>
-
-                        <td className="p-3.5 text-center">
-                          <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold border ${ord.isHandoverCompleted ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-amber-50 text-amber-700 border-amber-300'}`}>
-                            {ord.isHandoverCompleted ? '✓ Serah Terima Selesai' : 'Siap Diambil'}
-                          </span>
-                        </td>
-
-                        {/* 3. Faktur Web & 4. Nota REI */}
-                        <td className="p-3.5 text-right">
-                          <div className="flex flex-col sm:flex-row items-end sm:items-center justify-end gap-1.5">
+                        <td className="px-4 py-3">
+                          <div className="flex items-start gap-2.5">
                             <button
-                              onClick={() => setSelectedFakturWebOrder(ord)}
-                              className="px-2.5 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950 hover:bg-blue-100 text-blue-900 dark:text-blue-300 border border-blue-200 dark:border-blue-800 text-[11px] font-bold flex items-center gap-1"
+                              onClick={() => setPreviewId(o.id)}
+                              className="h-10 w-10 shrink-0 overflow-hidden rounded-md border border-gray-200 bg-gray-100 dark:border-white/10 dark:bg-white/5"
+                              title="Lihat desain"
                             >
-                              <FileText className="w-3.5 h-3.5 text-blue-700" />
-                              <span>3. Faktur Web</span>
+                              {isImageUrl(o.finalDesignUrl) ? (
+                                <img src={o.finalDesignUrl} alt="" className="h-full w-full object-cover" />
+                              ) : (
+                                <FileText className="m-auto h-4 w-4 text-gray-400" />
+                              )}
                             </button>
+                            <div className="min-w-0">
+                              <div className="font-medium tabular-nums">
+                                {o.goldGram} g × {o.quantity}
+                              </div>
+                              <div className="max-w-[200px] truncate text-xs text-gray-500 dark:text-gray-400" title={o.goldType}>
+                                {o.goldType}
+                              </div>
+                              <div className="mt-1">
+                                <Badge tone={o.designStatus === 'siap_cetak' ? 'blue' : 'gray'}>
+                                  {DESIGN_STATUS_LABEL[o.designStatus]}
+                                </Badge>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
 
-                            <button
-                              onClick={() => setSelectedNotaReiOrder(ord)}
-                              className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-purple-950 font-bold text-[11px] flex items-center gap-1 shadow-sm"
-                            >
-                              <Award className="w-3.5 h-3.5 text-purple-950" />
-                              <span>4. Nota REI</span>
+                        <td className="px-4 py-3">
+                          <StepIndicator step={wp.step} />
+                          {wp.shippingMethod && (wp.step === 'pengiriman' || wp.step === 'done') && (
+                            <div className="mt-1 flex max-w-[180px] items-center gap-1 truncate text-xs text-gray-500 dark:text-gray-400">
+                              <Truck className="h-3 w-3 shrink-0" />
+                              {wp.shippingMethod === 'jne' ? `JNE ${wp.jneResiNumber || '-'}` : shortBranch(wp.helperName || 'Helper REI')}
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col items-start gap-1">
+                            <Badge tone={dpPaid ? 'green' : 'amber'}>DP {dpPaid ? 'lunas' : 'pending'}</Badge>
+                            <Badge tone={lunasPaid ? 'green' : 'gray'}>
+                              {lunasPaid ? 'Pelunasan selesai' : `Sisa ${formatRupiah(o.lunasInvoice.remainingAmount)}`}
+                            </Badge>
+                          </div>
+                        </td>
+
+                        <td className="px-4 py-3 text-right font-medium tabular-nums">{formatRupiah(o.totalPrice)}</td>
+
+                        <td className="px-4 py-3">
+                          <div className="flex justify-end gap-1.5">
+                            {rolePerms.canUpdateProgress && (
+                              <button onClick={() => setProgressId(o.id)} className={btnCls} title="Update pengerjaan">
+                                <RefreshCw className="h-3.5 w-3.5" /> Progres
+                              </button>
+                            )}
+                            <button onClick={() => setDpId(o.id)} className={btnCls}>
+                              DP
+                            </button>
+                            <button onClick={() => setLunasId(o.id)} className={btnCls}>
+                              Lunas
                             </button>
                           </div>
                         </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <table className="w-full min-w-[920px] text-left text-sm">
+                <thead className="bg-gray-50 text-xs font-medium text-gray-500 dark:bg-white/[0.02] dark:text-gray-400">
+                  <tr>
+                    <th className="px-4 py-2.5 font-medium">Nasabah</th>
+                    <th className="px-4 py-2.5 font-medium">BPRS & cabang</th>
+                    <th className="px-4 py-2.5 font-medium">Emas</th>
+                    <th className="px-4 py-2.5 font-medium">Angsuran</th>
+                    <th className="px-4 py-2.5 font-medium">Serah terima</th>
+                    <th className="px-4 py-2.5 text-right font-medium">Dokumen</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                  {filteredBprs.length === 0 && <EmptyRow colSpan={6} onReset={bprsFilterActive ? resetBprsFilter : undefined} />}
+                  {filteredBprs.map((o) => {
+                    const pct = o.totalInstallments ? Math.min(100, Math.round((o.installmentsPaid / o.totalInstallments) * 100)) : 0;
+                    return (
+                      <tr key={o.id} className="align-top transition hover:bg-gray-50/70 dark:hover:bg-white/[0.02]">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-gray-900 dark:text-gray-100">{o.customerName}</span>
+                            {o.fromDatabase && (
+                              <Badge tone="blue">Live DB</Badge>
+                            )}
+                          </div>
+                          <div className="mt-0.5 font-mono text-[11px] text-gray-500 dark:text-gray-400">{o.contractNumber}</div>
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <div className="max-w-[220px] truncate" title={o.bprsName}>
+                            {o.bprsName}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                            <Building2 className="h-3 w-3" />
+                            {shortBranch(o.branchRei)} · {o.fakturDate}
+                          </div>
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <div className="font-medium tabular-nums">{o.goldGram} g</div>
+                          <div className="mt-0.5 font-mono text-[11px] text-gray-500 dark:text-gray-400">
+                            {o.goldSerialNumbers.join(', ')}
+                          </div>
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <span className="tabular-nums text-gray-700 dark:text-gray-300">
+                              {o.installmentsPaid}/{o.totalInstallments} bln
+                            </span>
+                            <span className="tabular-nums text-gray-500 dark:text-gray-400">{pct}%</span>
+                          </div>
+                          <div className="mt-1 h-1.5 w-36 overflow-hidden rounded-full bg-gray-200 dark:bg-white/10">
+                            <div
+                              className={`h-full rounded-full ${pct === 100 ? 'bg-emerald-500' : 'bg-purple-600 dark:bg-purple-400'}`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <div className="mt-1 text-xs tabular-nums text-gray-500 dark:text-gray-400">
+                            {formatRupiah(o.monthlyInstallment)}/bln
+                          </div>
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <Badge tone={o.isHandoverCompleted ? 'green' : 'amber'}>
+                            {o.isHandoverCompleted ? 'Selesai' : 'Belum'}
+                          </Badge>
+                          {o.isHandoverCompleted && o.notaHandoverDate && (
+                            <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{o.notaHandoverDate}</div>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <div className="flex justify-end gap-1.5">
+                            <button onClick={() => setFakturId(o.id)} className={btnCls}>
+                              <FileText className="h-3.5 w-3.5" /> Faktur
+                            </button>
+                            <button onClick={() => setNotaId(o.id)} className={btnCls}>
+                              <Award className="h-3.5 w-3.5" /> Nota
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
-        )}
+
+          <div className="flex items-center justify-between border-t border-gray-200 px-4 py-2.5 text-xs text-gray-500 dark:border-white/10 dark:text-gray-400">
+            <span>
+              {activeTab === 'custom'
+                ? `Menampilkan ${filteredCustom.length} dari ${customOrders.length} pesanan`
+                : `Menampilkan ${filteredBprs.length} dari ${bprsOrders.length} akad`}
+            </span>
+            {dbStatus?.connected && (
+              <span className="hidden text-[11px] text-emerald-600 dark:text-emerald-400 sm:inline">
+                Tersinkronisasi dengan database Mitra & CRM ({dbStatus.partnersCount} mitra aktif)
+              </span>
+            )}
+          </div>
+        </section>
       </main>
 
       {/* Modals */}
-      {selectedDpModalOrder && (
+      {dpOrder && (
         <CustomDpInvoiceModal
-          order={selectedDpModalOrder}
-          onClose={() => setSelectedDpModalOrder(null)}
-          onConfirmDp={handleConfirmDpPayment}
+          order={dpOrder}
+          onClose={() => setDpId(null)}
+          onConfirmDp={rolePerms.canConfirmPayment ? handleConfirmDp : undefined}
         />
       )}
 
-      {selectedLunasModalOrder && (
+      {lunasOrder && (
         <CustomLunasInvoiceModal
-          order={selectedLunasModalOrder}
-          onClose={() => setSelectedLunasModalOrder(null)}
-          onConfirmLunas={handleConfirmLunasPayment}
+          order={lunasOrder}
+          onClose={() => setLunasId(null)}
+          onConfirmLunas={rolePerms.canConfirmPayment ? handleConfirmLunas : undefined}
         />
       )}
 
-      {selectedProgressModalOrder && (
+      {progressOrder && (
         <UpdateProgressModal
-          order={selectedProgressModalOrder}
-          onClose={() => setSelectedProgressModalOrder(null)}
+          order={progressOrder}
+          onClose={() => setProgressId(null)}
           onUpdate={handleUpdateProgress}
         />
       )}
 
-      {selectedFakturWebOrder && (
-        <BprsFakturWebModal
-          order={selectedFakturWebOrder}
-          onClose={() => setSelectedFakturWebOrder(null)}
-        />
-      )}
+      {fakturOrder && <BprsFakturWebModal order={fakturOrder} onClose={() => setFakturId(null)} />}
 
-      {selectedNotaReiOrder && (
+      {notaOrder && (
         <BprsNotaReiModal
-          order={selectedNotaReiOrder}
-          onClose={() => setSelectedNotaReiOrder(null)}
-          onCompleteHandover={handleCompleteHandover}
+          key={`${notaOrder.id}-${notaOrder.isHandoverCompleted}`}
+          order={notaOrder}
+          onClose={() => setNotaId(null)}
+          onCompleteHandover={rolePerms.canSignNotaRei ? handleCompleteHandover : undefined}
         />
       )}
 
-      {isNewOrderModalOpen && (
+      {isNewOrderOpen && (
         <NewCustomOrderModal
-          onClose={() => setIsNewOrderModalOpen(false)}
+          onClose={() => setIsNewOrderOpen(false)}
           onSubmit={handleAddNewCustomOrder}
+          defaultBranch={session.branchRei}
+          defaultPricePerGram={dbStatus?.goldPrice1g}
         />
       )}
 
-      {previewDesignUrl && (
-        <div
-          onClick={() => setPreviewDesignUrl(null)}
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer"
-        >
-          <div className="relative max-w-2xl max-h-[85vh] bg-black rounded-2xl overflow-hidden border border-white/20 p-2">
-            <img src={previewDesignUrl} alt="Preview" className="max-h-[80vh] w-full object-contain rounded-xl" />
-            <div className="text-center text-xs text-gray-300 mt-2 font-medium">
-              Klik di mana saja untuk menutup preview
+      {previewOrder && (
+        <div onClick={() => setPreviewId(null)} className="fixed inset-0 z-50 flex bg-black/80 p-4 print:hidden">
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="m-auto w-full max-w-2xl overflow-hidden rounded-xl bg-white dark:bg-[#16131f]"
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-white/10">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium">{previewOrder.customerName}</div>
+                <div className="truncate font-mono text-[11px] text-gray-500 dark:text-gray-400">
+                  {previewOrder.finalDesignFilename || 'File desain'}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <a
+                  href={previewOrder.finalDesignUrl}
+                  download={previewOrder.finalDesignFilename || true}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={btnCls}
+                >
+                  <Download className="h-3.5 w-3.5" /> Unduh
+                </a>
+                <button onClick={() => setPreviewId(null)} className={btnCls} aria-label="Tutup">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex max-h-[75vh] items-center justify-center bg-gray-950 p-2">
+              {isImageUrl(previewOrder.finalDesignUrl) ? (
+                <img src={previewOrder.finalDesignUrl} alt="Desain final" className="max-h-[72vh] w-full object-contain" />
+              ) : (
+                <div className="flex h-48 flex-col items-center justify-center gap-2 text-sm text-gray-300">
+                  <FileText className="h-8 w-8" />
+                  Preview tidak tersedia, silakan unduh file.
+                </div>
+              )}
             </div>
           </div>
         </div>
